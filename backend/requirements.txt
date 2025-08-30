@@ -1,0 +1,9 @@
+torch
+torchaudio
+torchvision
+openai-whisper
+pyannote.audio
+transformers
+huggingface_hub
+pydub
+ffmpeg
