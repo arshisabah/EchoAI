@@ -248,10 +248,9 @@ Updated transcript router with centralized store and proper error handling.
 """
 
 import asyncio
+from datetime import datetime
 import logging
-from typing import List
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Depends
-from fastapi.responses import JSONResponse
 
 from app.modules.realtime_store import realtime_store
 from app.models.schemas import (
@@ -266,75 +265,49 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/transcript", tags=["Transcript"])
 
 async def get_valid_session(meeting_id: str):
-    """Dependency to validate meeting session exists."""
     session = await realtime_store.get_session(meeting_id)
     if not session:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No active session found for meeting ID: {meeting_id}"
-        )
+        raise HTTPException(status_code=404, detail="No active session found")
     return session
 
 @router.websocket("/live/{meeting_id}")
 async def websocket_endpoint(websocket: WebSocket, meeting_id: str):
-    """
-    WebSocket endpoint for real-time transcript streaming.
-    
-    Clients connect here to receive live transcript updates.
-    """
     await websocket.accept()
     queue = asyncio.Queue()
-    
     try:
-        # Ensure session exists
         await realtime_store.create_session(meeting_id)
-        
-        # Add connection to store
         await realtime_store.add_connection(meeting_id, queue)
-        
-        # Send initial session info
+
         session = await realtime_store.get_session(meeting_id)
         await websocket.send_json({
             "type": "session_connected",
             "data": session.to_dict() if session else {}
         })
-        
+
         logger.info(f"WebSocket connected for meeting: {meeting_id}")
-        
-        # Listen for messages to broadcast
+
         while True:
             try:
-                # Wait for new data from the queue
                 data = await asyncio.wait_for(queue.get(), timeout=30.0)
                 await websocket.send_json({
                     "type": "transcript_entry",
                     "data": data
                 })
             except asyncio.TimeoutError:
-                # Send heartbeat to keep connection alive
                 await websocket.send_json({
                     "type": "heartbeat",
-                    "data": {"timestamp": "now"}
+                    "data": {"timestamp": datetime.now().isoformat()}
                 })
-                
+
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for meeting: {meeting_id}")
     except Exception as e:
         logger.error(f"WebSocket error for meeting {meeting_id}: {e}")
     finally:
-        # Clean up connection
         await realtime_store.remove_connection(meeting_id, queue)
 
 @router.post("/{meeting_id}/add", response_model=TranscriptEntryResponse)
-async def add_transcript_entry(
-    meeting_id: str,
-    entry_request: TranscriptEntryRequest
-):
-    """
-    Add a new transcript entry to the meeting.
-    
-    This will automatically broadcast to all connected WebSocket clients.
-    """
+async def add_transcript_entry(meeting_id: str, entry_request: TranscriptEntryRequest):
     try:
         entry = await realtime_store.add_transcript_entry(
             meeting_id=meeting_id,
@@ -342,53 +315,32 @@ async def add_transcript_entry(
             text=entry_request.text,
             confidence=entry_request.confidence
         )
-        
         logger.info(f"Added transcript entry for {meeting_id}: {entry_request.speaker}")
         return TranscriptEntryResponse(**entry.to_dict())
-        
     except Exception as e:
         logger.error(f"Error adding transcript entry: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{meeting_id}", response_model=TranscriptsResponse)
-async def get_transcripts(
-    meeting_id: str,
-    limit: int = 100,
-    session = Depends(get_valid_session)
-):
-    """
-    Get all transcript entries for a meeting.
-    
-    Args:
-        meeting_id: The meeting identifier
-        limit: Maximum number of entries to return (default: 100)
-    """
+async def get_transcripts(meeting_id: str, limit: int = 100, session=Depends(get_valid_session)):
     try:
         if limit > 1000:
             raise HTTPException(status_code=400, detail="Limit cannot exceed 1000")
-            
+
         entries = await realtime_store.get_recent_transcripts(meeting_id, limit)
-        
         return TranscriptsResponse(
             meeting_id=meeting_id,
             transcripts=[TranscriptEntryResponse(**entry.to_dict()) for entry in entries],
             total_count=len(entries)
         )
-        
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error getting transcripts for {meeting_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/{meeting_id}/session", response_model=SessionInfoResponse)
-async def get_session_info(meeting_id: str, session = Depends(get_valid_session)):
-    """Get session information for a meeting."""
-    return SessionInfoResponse(**session.to_dict())
-
 @router.post("/{meeting_id}/start", response_model=SessionInfoResponse)
 async def start_session(meeting_id: str):
-    """Start a new transcript session for a meeting."""
     try:
         session = await realtime_store.create_session(meeting_id)
         logger.info(f"Started new session: {meeting_id}")
@@ -398,8 +350,7 @@ async def start_session(meeting_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{meeting_id}/end")
-async def end_session(meeting_id: str, session = Depends(get_valid_session)):
-    """End a transcript session and clean up resources."""
+async def end_session(meeting_id: str, session=Depends(get_valid_session)):
     try:
         await realtime_store.end_session(meeting_id)
         logger.info(f"Ended session: {meeting_id}")
@@ -408,115 +359,6 @@ async def end_session(meeting_id: str, session = Depends(get_valid_session)):
         logger.error(f"Error ending session {meeting_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# app/routers/analytics.py
-"""
-Updated analytics router using centralized store.
-"""
-
-import logging
-from fastapi import APIRouter, HTTPException, Depends
-
-from app.modules.realtime_store import realtime_store
-from app.models.schemas import AnalyticsResponse, ErrorResponse
-from .transcript import get_valid_session
-
-logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/analytics", tags=["Analytics"])
-
-@router.get("/{meeting_id}", response_model=AnalyticsResponse)
-async def get_meeting_analytics(
-    meeting_id: str,
-    session = Depends(get_valid_session)
-):
-    """
-    Get comprehensive analytics for a meeting session.
-    
-    Includes speaker statistics, word counts, confidence scores, and more.
-    """
-    try:
-        analytics_data = await realtime_store.get_analytics_data(meeting_id)
-        
-        if not analytics_data:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No analytics data available for meeting: {meeting_id}"
-            )
-        
-        logger.info(f"Generated analytics for meeting: {meeting_id}")
-        return AnalyticsResponse(**analytics_data)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error generating analytics for {meeting_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# app/routers/summary.py
-"""
-Updated summary router using centralized store.
-"""
-
-import logging
-from datetime import datetime
-from fastapi import APIRouter, HTTPException, Depends
-
-from app.modules.realtime_store import realtime_store
-from app.models.schemas import SummaryResponse
-from .transcript import get_valid_session
-
-logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/summary", tags=["Summary"])
-
-@router.get("/{meeting_id}", response_model=SummaryResponse)
-async def get_meeting_summary(
-    meeting_id: str,
-    session = Depends(get_valid_session)
-):
-    """
-    Generate a meeting summary with key points and insights.
-    
-    In production, this would integrate with LLM services for intelligent summarization.
-    """
-    try:
-        # Get transcript data
-        transcripts = await realtime_store.get_transcripts(meeting_id)
-        session_info = await realtime_store.get_session(meeting_id)
-        
-        if not transcripts:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No transcript data available for meeting: {meeting_id}"
-            )
-        
-        # Generate summary (placeholder - replace with LLM integration)
-        total_words = sum(len(entry.text.split()) for entry in transcripts)
-        participants = list(session_info.participants)
-        duration = (datetime.now() - session_info.created_at).total_seconds() / 60
-        
-        # Simple summary generation (replace with AI/LLM)
-        summary = f"Meeting with {len(participants)} participants lasting {duration:.1f} minutes. " \
-                 f"Total of {len(transcripts)} transcript entries with {total_words} words discussed."
-        
-        # Extract key points (placeholder logic)
-        key_points = []
-        for entry in transcripts[-5:]:  # Last 5 entries as "key points"
-            if len(entry.text) > 50:  # Only longer statements
-                key_points.append(f"{entry.speaker}: {entry.text[:100]}...")
-        
-        result = SummaryResponse(
-            meeting_id=meeting_id,
-            summary=summary,
-            key_points=key_points[:3],  # Top 3 key points
-            participants=participants,
-            duration_minutes=duration,
-            generated_at=datetime.now().isoformat()
-        )
-        
-        logger.info(f"Generated summary for meeting: {meeting_id}")
-        return result
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error generating summary for {meeting_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+@router.get("/{meeting_id}/session", response_model=SessionInfoResponse)
+async def get_session_info(meeting_id: str, session=Depends(get_valid_session)):
+    return SessionInfoResponse(**session.to_dict())

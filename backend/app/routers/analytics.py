@@ -1,21 +1,24 @@
-from fastapi import APIRouter
-from database.session_store import SessionStore
+import logging
+from fastapi import APIRouter, HTTPException, Depends
 
-router = APIRouter()
-session_store = SessionStore()
+from app.modules.realtime_store import realtime_store
+from app.models.schemas import AnalyticsResponse, ErrorResponse
+from .transcript import get_valid_session
 
-@router.get("/{meeting_id}")
-def get_analytics(meeting_id: str):
-    transcript = session_store.get_transcript(meeting_id)
-    if not transcript:
-        return {"error": "No transcript found"}
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
-    total_words = sum(len(turn["text"].split()) for turn in transcript)
-    speakers = {turn["speaker"] for turn in transcript}
-
-    return {
-        "meeting_id": meeting_id,
-        "speakers": list(speakers),
-        "total_words": total_words,
-        "turns": len(transcript),
-    }
+@router.get("/{meeting_id}", response_model=AnalyticsResponse)
+async def get_meeting_analytics(meeting_id: str, session=Depends(get_valid_session)):
+    try:
+        analytics_data = await realtime_store.get_analytics_data(meeting_id)
+        if not analytics_data:
+            raise HTTPException(status_code=404, detail="No analytics data available")
+        
+        logger.info(f"Generated analytics for meeting: {meeting_id}")
+        return AnalyticsResponse(**analytics_data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating analytics for {meeting_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
