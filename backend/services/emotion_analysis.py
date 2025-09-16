@@ -1,608 +1,282 @@
+# backend/services/emotion_service.py
 """
-Comprehensive logging system for EchoAI real-time emotion analysis
-Handles WebSocket connections, emotion processing, alerts, and performance monitoring
+Emotion Analysis Service for EchoAI.
+
+Responsibilities:
+- Analyze emotion from transcribed text using LLM
+- Provide confidence scores for detected emotions
+- Support both real-time and batch processing
+- Return structured emotion data
 """
 
 import logging
-import logging.handlers
-import asyncio
-import time
+import uuid
+from datetime import datetime
+from typing import Dict, List, Optional, Any
 import json
-import threading
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List, Callable
-from dataclasses import dataclass, asdict
-from enum import Enum
-from pathlib import Path
-from contextlib import asynccontextmanager
-import sys
-import traceback
 
-class LogLevel(str, Enum):
-    DEBUG = "DEBUG"
-    INFO = "INFO" 
-    WARNING = "WARNING"
-    ERROR = "ERROR"
-    CRITICAL = "CRITICAL"
+from openai import AsyncOpenAI
 
-class LogCategory(str, Enum):
-    WEBSOCKET = "websocket"
-    EMOTION_ANALYSIS = "emotion_analysis"
-    ALERT_SYSTEM = "alert_system"
-    TRANSCRIPT = "transcript"
-    PERFORMANCE = "performance"
-    API = "api"
-    SYSTEM = "system"
+logger = logging.getLogger(__name__)
 
-@dataclass
-class LogEntry:
-    """Structured log entry for EchoAI"""
-    timestamp: float
-    level: str
-    category: str
-    message: str
-    session_id: Optional[str] = None
-    speaker: Optional[str] = None
-    processing_time_ms: Optional[float] = None
-    emotion: Optional[str] = None
-    sentiment_score: Optional[float] = None
-    confidence: Optional[float] = None
-    metadata: Optional[Dict[str, Any]] = None
-    trace_id: Optional[str] = None
+# Initialize OpenAI client
+client = AsyncOpenAI()
+
+# Supported emotion labels
+SUPPORTED_EMOTIONS = [
+    "happy",
+    "sad", 
+    "angry",
+    "neutral",
+    "excited",
+    "frustrated",
+    "confused",
+    "surprised",
+    "bored",
+    "anxious",
+    "confident",
+    "disappointed"
+]
+
+
+class EmotionResult:
+    """Container for emotion analysis results."""
     
-    def to_dict(self) -> Dict[str, Any]:
-        return {k: v for k, v in asdict(self).items() if v is not None}
+    def __init__(self, emotion: str, confidence: float, scores: Dict[str, float] = None):
+        self.emotion = emotion
+        self.confidence = confidence
+        self.scores = scores or {}
 
-class RealTimeMetrics:
-    """Real-time metrics collector for logging"""
-    
-    def _init_(self):
-        self.metrics = {
-            'websocket_connections': 0,
-            'active_sessions': 0,
-            'total_transcripts_processed': 0,
-            'total_emotions_analyzed': 0,
-            'alerts_triggered': 0,
-            'avg_processing_time_ms': 0.0,
-            'error_count': 0,
-            'uptime_seconds': 0
-        }
-        self.start_time = time.time()
-        self._lock = threading.Lock()
-        
-        # Performance tracking
-        self.processing_times: List[float] = []
-        self.max_processing_times = 1000  # Keep last 1000 measurements
-        
-    def update_metric(self, key: str, value: Any):
-        """Thread-safe metric update"""
-        with self._lock:
-            if key in self.metrics:
-                self.metrics[key] = value
-            
-    def increment_metric(self, key: str, amount: int = 1):
-        """Thread-safe metric increment"""
-        with self._lock:
-            if key in self.metrics:
-                self.metrics[key] += amount
-                
-    def add_processing_time(self, time_ms: float):
-        """Add processing time measurement"""
-        with self._lock:
-            self.processing_times.append(time_ms)
-            if len(self.processing_times) > self.max_processing_times:
-                self.processing_times.pop(0)
-            
-            # Update average
-            if self.processing_times:
-                self.metrics['avg_processing_time_ms'] = sum(self.processing_times) / len(self.processing_times)
-    
-    def get_snapshot(self) -> Dict[str, Any]:
-        """Get current metrics snapshot"""
-        with self._lock:
-            self.metrics['uptime_seconds'] = time.time() - self.start_time
-            return self.metrics.copy()
 
-class AsyncLogHandler:
-    """Async log handler for real-time logging"""
-    
-    def _init_(self, max_queue_size: int = 10000):
-        self.log_queue = asyncio.Queue(maxsize=max_queue_size)
-        self.handlers: List[Callable[[LogEntry], None]] = []
-        self.processing_task: Optional[asyncio.Task] = None
-        self.running = False
-        
-    def add_handler(self, handler: Callable[[LogEntry], None]):
-        """Add log handler"""
-        self.handlers.append(handler)
-        
-    async def start(self):
-        """Start async log processing"""
-        if not self.running:
-            self.running = True
-            self.processing_task = asyncio.create_task(self._process_logs())
-            
-    async def stop(self):
-        """Stop async log processing"""
-        self.running = False
-        if self.processing_task:
-            self.processing_task.cancel()
-            try:
-                await self.processing_task
-            except asyncio.CancelledError:
-                pass
-                
-    async def log(self, entry: LogEntry):
-        """Add log entry to queue"""
+class EmotionService:
+    """Service for analyzing emotions from text using OpenAI."""
+
+    def __init__(self):
+        self.supported_emotions = SUPPORTED_EMOTIONS
+        logger.info("EmotionService initialized with OpenAI GPT-4o-mini")
+
+    async def analyze_text(self, text: str) -> Dict[str, Any]:
+        """
+        Analyze emotion from a chunk of transcribed text.
+
+        Args:
+            text (str): The transcribed text to analyze
+
+        Returns:
+            dict: Contains 'emotion', 'confidence', and 'scores'
+        """
+        if not text.strip():
+            return {
+                "emotion": "neutral",
+                "confidence": 0.0,
+                "scores": {emotion: 0.0 for emotion in self.supported_emotions}
+            }
+
         try:
-            self.log_queue.put_nowait(entry)
-        except asyncio.QueueFull:
-            # If queue is full, drop oldest entry and add new one
+            # Create prompt for emotion classification
+            emotions_str = ", ".join(self.supported_emotions)
+            prompt = (
+                "Analyze the emotion in the following text. "
+                f"Choose from these emotions: {emotions_str}. "
+                "Respond with a JSON object containing:\n"
+                "- 'emotion': the primary emotion (string)\n"
+                "- 'confidence': confidence score 0-1 (float)\n"
+                "- 'scores': object with all emotions and their scores 0-1 (object)\n\n"
+                f"Text to analyze: \"{text}\""
+            )
+
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": "You are an expert emotion detection assistant. Always respond with valid JSON."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                max_tokens=300
+            )
+
+            content = response.choices[0].message.content.strip()
+            
+            # Parse the JSON response
             try:
-                self.log_queue.get_nowait()
-                self.log_queue.put_nowait(entry)
-            except asyncio.QueueEmpty:
-                pass
+                result = json.loads(content)
+                emotion = result.get("emotion", "neutral").lower()
+                confidence = float(result.get("confidence", 0.5))
+                scores = result.get("scores", {})
                 
-    async def _process_logs(self):
-        """Process logs from queue"""
-        while self.running:
-            try:
-                entry = await asyncio.wait_for(self.log_queue.get(), timeout=1.0)
+                # Validate emotion is in supported list
+                if emotion not in self.supported_emotions:
+                    emotion = "neutral"
+                    confidence = 0.3
                 
-                for handler in self.handlers:
-                    try:
-                        if asyncio.iscoroutinefunction(handler):
-                            await handler(entry)
-                        else:
-                            handler(entry)
-                    except Exception as e:
-                        # Log handler errors to stderr to avoid infinite loops
-                        print(f"Log handler error: {e}", file=sys.stderr)
-                        
-                self.log_queue.task_done()
+                # Ensure all emotions have scores
+                complete_scores = {emo: scores.get(emo, 0.0) for emo in self.supported_emotions}
                 
-            except asyncio.TimeoutError:
-                continue
-            except asyncio.CancelledError:
+                return {
+                    "emotion": emotion,
+                    "confidence": confidence,
+                    "scores": complete_scores
+                }
+                
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse emotion JSON: {content}, error: {e}")
+                return self._fallback_emotion_analysis(text, content)
+
+        except Exception as e:
+            logger.error(f"Emotion analysis failed: {e}")
+            return {
+                "emotion": "neutral",
+                "confidence": 0.0,
+                "scores": {emotion: 0.0 for emotion in self.supported_emotions}
+            }
+
+    def _fallback_emotion_analysis(self, text: str, response_content: str) -> Dict[str, Any]:
+        """Fallback emotion detection using keyword matching."""
+        text_lower = text.lower()
+        response_lower = response_content.lower()
+        
+        # Simple keyword-based emotion detection
+        emotion_keywords = {
+            "happy": ["happy", "joy", "excited", "great", "awesome", "wonderful", "good"],
+            "sad": ["sad", "down", "depressed", "unhappy", "disappointed"],
+            "angry": ["angry", "mad", "furious", "upset", "irritated"],
+            "frustrated": ["frustrated", "annoyed", "stressed"],
+            "confused": ["confused", "unclear", "don't understand"],
+            "surprised": ["surprised", "shocked", "wow", "unexpected"],
+            "bored": ["bored", "tired", "uninterested"],
+            "anxious": ["anxious", "worried", "nervous", "concerned"],
+            "confident": ["confident", "sure", "certain", "strong"]
+        }
+        
+        detected_emotion = "neutral"
+        confidence = 0.3
+        
+        # Check for emotion keywords in text or response
+        for emotion, keywords in emotion_keywords.items():
+            if any(keyword in text_lower for keyword in keywords):
+                detected_emotion = emotion
+                confidence = 0.6
                 break
-            except Exception as e:
-                print(f"Log processing error: {e}", file=sys.stderr)
-
-class EchoAILogger:
-    """Main logging system for EchoAI"""
-    
-    def _init_(self, 
-                 log_level: str = "INFO",
-                 log_dir: str = "logs",
-                 enable_console: bool = True,
-                 enable_file: bool = True,
-                 enable_json: bool = True,
-                 max_file_size_mb: int = 100,
-                 backup_count: int = 5):
+            elif any(keyword in response_lower for keyword in keywords):
+                detected_emotion = emotion
+                confidence = 0.4
+                break
         
-        self.log_level = getattr(logging, log_level.upper())
-        self.log_dir = Path(log_dir)
-        self.log_dir.mkdir(exist_ok=True)
-        
-        # Initialize components
-        self.metrics = RealTimeMetrics()
-        self.async_handler = AsyncLogHandler()
-        
-        # Setup standard Python logging
-        self._setup_standard_logging(enable_console, enable_file, max_file_size_mb, backup_count)
-        
-        # Setup async handlers
-        if enable_json:
-            self.async_handler.add_handler(self._json_file_handler)
-        self.async_handler.add_handler(self._metrics_handler)
-        
-        # Performance tracking
-        self.session_contexts: Dict[str, Dict[str, Any]] = {}
-        
-    def _setup_standard_logging(self, enable_console: bool, enable_file: bool, 
-                               max_file_size_mb: int, backup_count: int):
-        """Setup standard Python logging"""
-        
-        # Create formatters
-        console_formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        file_formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
-        )
-        
-        # Root logger setup
-        root_logger = logging.getLogger()
-        root_logger.setLevel(self.log_level)
-        
-        # Console handler
-        if enable_console:
-            console_handler = logging.StreamHandler()
-            console_handler.setLevel(self.log_level)
-            console_handler.setFormatter(console_formatter)
-            root_logger.addHandler(console_handler)
-        
-        # File handler with rotation
-        if enable_file:
-            file_handler = logging.handlers.RotatingFileHandler(
-                self.log_dir / "echoai.log",
-                maxBytes=max_file_size_mb * 1024 * 1024,
-                backupCount=backup_count
-            )
-            file_handler.setLevel(self.log_level)
-            file_handler.setFormatter(file_formatter)
-            root_logger.addHandler(file_handler)
-        
-        # Error file handler
-        error_handler = logging.handlers.RotatingFileHandler(
-            self.log_dir / "echoai_errors.log",
-            maxBytes=50 * 1024 * 1024,
-            backupCount=backup_count
-        )
-        error_handler.setLevel(logging.ERROR)
-        error_handler.setFormatter(file_formatter)
-        root_logger.addHandler(error_handler)
-        
-    async def _json_file_handler(self, entry: LogEntry):
-        """Handler for JSON structured logs"""
-        json_log_file = self.log_dir / "echoai_structured.jsonl"
-        
-        try:
-            with open(json_log_file, 'a', encoding='utf-8') as f:
-                json.dump(entry.to_dict(), f, ensure_ascii=False)
-                f.write('\n')
-        except Exception as e:
-            logging.error(f"Failed to write JSON log: {e}")
-            
-    async def _metrics_handler(self, entry: LogEntry):
-        """Handler for metrics updates"""
-        if entry.processing_time_ms:
-            self.metrics.add_processing_time(entry.processing_time_ms)
-            
-        if entry.level == "ERROR":
-            self.metrics.increment_metric('error_count')
-            
-    async def start(self):
-        """Start the logging system"""
-        await self.async_handler.start()
-        logging.info("EchoAI logging system started")
-        
-    async def stop(self):
-        """Stop the logging system"""
-        await self.async_handler.stop()
-        logging.info("EchoAI logging system stopped")
-
-    # Context managers for session tracking
-    @asynccontextmanager
-    async def session_context(self, session_id: str, metadata: Optional[Dict[str, Any]] = None):
-        """Context manager for session logging"""
-        self.session_contexts[session_id] = {
-            'start_time': time.time(),
-            'metadata': metadata or {}
-        }
-        
-        await self.log_session_start(session_id, metadata)
-        self.metrics.increment_metric('active_sessions')
-        
-        try:
-            yield session_id
-        finally:
-            duration = time.time() - self.session_contexts[session_id]['start_time']
-            await self.log_session_end(session_id, duration)
-            self.metrics.increment_metric('active_sessions', -1)
-            del self.session_contexts[session_id]
-
-    # Specialized logging methods for EchoAI
-    async def log_websocket_connection(self, session_id: str, client_info: Dict[str, Any], connected: bool = True):
-        """Log WebSocket connection events"""
-        action = "connected" if connected else "disconnected"
-        
-        entry = LogEntry(
-            timestamp=time.time(),
-            level=LogLevel.INFO,
-            category=LogCategory.WEBSOCKET,
-            message=f"WebSocket {action}",
-            session_id=session_id,
-            metadata=client_info
-        )
-        
-        if connected:
-            self.metrics.increment_metric('websocket_connections')
-        else:
-            self.metrics.increment_metric('websocket_connections', -1)
-            
-        await self.async_handler.log(entry)
-        logging.info(f"WebSocket {action} - Session: {session_id}")
-        
-    async def log_transcript_processing(self, session_id: str, speaker: str, text: str, 
-                                      processing_time_ms: float, is_final: bool = True):
-        """Log transcript processing"""
-        entry = LogEntry(
-            timestamp=time.time(),
-            level=LogLevel.DEBUG,
-            category=LogCategory.TRANSCRIPT,
-            message=f"Transcript processed: {text[:50]}{'...' if len(text) > 50 else ''}",
-            session_id=session_id,
-            speaker=speaker,
-            processing_time_ms=processing_time_ms,
-            metadata={'is_final': is_final, 'text_length': len(text)}
-        )
-        
-        self.metrics.increment_metric('total_transcripts_processed')
-        await self.async_handler.log(entry)
-        
-    async def log_emotion_analysis(self, session_id: str, speaker: str, emotion_result, 
-                                 processing_time_ms: float):
-        """Log emotion analysis results"""
-        entry = LogEntry(
-            timestamp=time.time(),
-            level=LogLevel.DEBUG,
-            category=LogCategory.EMOTION_ANALYSIS,
-            message=f"Emotion analyzed: {emotion_result.primary_emotion.value}",
-            session_id=session_id,
-            speaker=speaker,
-            processing_time_ms=processing_time_ms,
-            emotion=emotion_result.primary_emotion.value,
-            sentiment_score=emotion_result.sentiment_score,
-            confidence=emotion_result.confidence,
-            metadata={
-                'emotional_intensity': emotion_result.emotional_intensity,
-                'valence': emotion_result.valence,
-                'arousal': emotion_result.arousal,
-                'context_influenced': emotion_result.context_influenced
-            }
-        )
-        
-        self.metrics.increment_metric('total_emotions_analyzed')
-        await self.async_handler.log(entry)
-        
-    async def log_alert(self, alert_type: str, alert_data: Dict[str, Any], session_id: str = None):
-        """Log emotion alerts"""
-        entry = LogEntry(
-            timestamp=time.time(),
-            level=LogLevel.WARNING,
-            category=LogCategory.ALERT_SYSTEM,
-            message=f"Emotion alert triggered: {alert_type}",
-            session_id=session_id,
-            speaker=alert_data.get('speaker'),
-            emotion=alert_data.get('emotion'),
-            sentiment_score=alert_data.get('sentiment_score'),
-            confidence=alert_data.get('confidence'),
-            metadata={'alert_type': alert_type, 'full_alert_data': alert_data}
-        )
-        
-        self.metrics.increment_metric('alerts_triggered')
-        await self.async_handler.log(entry)
-        logging.warning(f"EMOTION ALERT: {alert_type} - {alert_data}")
-        
-    async def log_performance_metric(self, metric_name: str, value: float, 
-                                   session_id: str = None, metadata: Dict[str, Any] = None):
-        """Log performance metrics"""
-        entry = LogEntry(
-            timestamp=time.time(),
-            level=LogLevel.INFO,
-            category=LogCategory.PERFORMANCE,
-            message=f"Performance metric: {metric_name} = {value}",
-            session_id=session_id,
-            processing_time_ms=value if 'time' in metric_name.lower() else None,
-            metadata={'metric_name': metric_name, 'metric_value': value, **(metadata or {})}
-        )
-        
-        await self.async_handler.log(entry)
-        
-    async def log_api_request(self, endpoint: str, method: str, status_code: int, 
-                            response_time_ms: float, session_id: str = None):
-        """Log API requests"""
-        level = LogLevel.ERROR if status_code >= 400 else LogLevel.INFO
-        
-        entry = LogEntry(
-            timestamp=time.time(),
-            level=level,
-            category=LogCategory.API,
-            message=f"{method} {endpoint} - {status_code}",
-            session_id=session_id,
-            processing_time_ms=response_time_ms,
-            metadata={'endpoint': endpoint, 'method': method, 'status_code': status_code}
-        )
-        
-        await self.async_handler.log(entry)
-        
-    async def log_error(self, error: Exception, session_id: str = None, 
-                       context: str = None, trace_id: str = None):
-        """Log errors with full traceback"""
-        tb_str = traceback.format_exc()
-        
-        entry = LogEntry(
-            timestamp=time.time(),
-            level=LogLevel.ERROR,
-            category=LogCategory.SYSTEM,
-            message=f"Error in {context or 'unknown'}: {str(error)}",
-            session_id=session_id,
-            trace_id=trace_id,
-            metadata={'error_type': type(error)._name_, 'traceback': tb_str}
-        )
-        
-        await self.async_handler.log(entry)
-        logging.error(f"Error in {context or 'unknown'}: {str(error)}", exc_info=True)
-        
-    async def log_session_start(self, session_id: str, metadata: Dict[str, Any] = None):
-        """Log session start"""
-        entry = LogEntry(
-            timestamp=time.time(),
-            level=LogLevel.INFO,
-            category=LogCategory.SYSTEM,
-            message=f"Session started: {session_id}",
-            session_id=session_id,
-            metadata=metadata
-        )
-        
-        await self.async_handler.log(entry)
-        logging.info(f"Session started: {session_id}")
-        
-    async def log_session_end(self, session_id: str, duration_seconds: float):
-        """Log session end"""
-        entry = LogEntry(
-            timestamp=time.time(),
-            level=LogLevel.INFO,
-            category=LogCategory.SYSTEM,
-            message=f"Session ended: {session_id}",
-            session_id=session_id,
-            metadata={'duration_seconds': duration_seconds}
-        )
-        
-        await self.async_handler.log(entry)
-        logging.info(f"Session ended: {session_id} (duration: {duration_seconds:.2f}s)")
-        
-    def get_metrics(self) -> Dict[str, Any]:
-        """Get current metrics"""
-        return self.metrics.get_snapshot()
-        
-    def get_log_summary(self, hours_back: int = 24) -> Dict[str, Any]:
-        """Get log summary for dashboard"""
-        # This would typically query the JSON logs
-        # For now, return current metrics
         return {
-            'current_metrics': self.get_metrics(),
-            'time_period_hours': hours_back,
-            'log_files': {
-                'main_log': str(self.log_dir / "echoai.log"),
-                'error_log': str(self.log_dir / "echoai_errors.log"),
-                'structured_log': str(self.log_dir / "echoai_structured.jsonl")
-            }
+            "emotion": detected_emotion,
+            "confidence": confidence,
+            "scores": {emotion: (0.6 if emotion == detected_emotion else 0.1) for emotion in self.supported_emotions}
         }
 
-# Usage examples and integration
-logger_instance = None
+    async def analyze_batch(self, texts: List[str]) -> List[Dict[str, Any]]:
+        """
+        Analyze emotions for multiple text chunks.
+        
+        Args:
+            texts: List of text strings to analyze
+            
+        Returns:
+            List of emotion analysis results
+        """
+        results = []
+        for text in texts:
+            result = await self.analyze_text(text)
+            results.append(result)
+        return results
 
-async def get_logger() -> EchoAILogger:
-    """Get global logger instance"""
-    global logger_instance
-    if logger_instance is None:
-        logger_instance = EchoAILogger(
-            log_level="INFO",
-            log_dir="logs",
-            enable_console=True,
-            enable_file=True,
-            enable_json=True
-        )
-        await logger_instance.start()
-    return logger_instance
+    async def analyze_session_emotions(self, transcript_entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Analyze emotions across an entire session.
+        
+        Args:
+            transcript_entries: List of transcript dictionaries with 'text' field
+            
+        Returns:
+            Dict with session emotion summary
+        """
+        if not transcript_entries:
+            return {
+                "overall_emotion": "neutral",
+                "emotion_distribution": {emotion: 0.0 for emotion in self.supported_emotions},
+                "emotion_timeline": []
+            }
+        
+        emotions = []
+        emotion_counts = {emotion: 0 for emotion in self.supported_emotions}
+        
+        for entry in transcript_entries:
+            if not entry.get("text"):
+                continue
+                
+            emotion_result = await self.analyze_text(entry["text"])
+            emotions.append({
+                "timestamp": entry.get("timestamp", datetime.utcnow().isoformat()),
+                "speaker": entry.get("speaker", "Unknown"),
+                "emotion": emotion_result["emotion"],
+                "confidence": emotion_result["confidence"]
+            })
+            
+            emotion_counts[emotion_result["emotion"]] += 1
+        
+        # Calculate overall emotion (most frequent)
+        total_entries = len(emotions)
+        overall_emotion = max(emotion_counts.items(), key=lambda x: x[1])[0] if total_entries > 0 else "neutral"
+        
+        # Calculate distribution percentages
+        emotion_distribution = {
+            emotion: (count / total_entries * 100) if total_entries > 0 else 0.0
+            for emotion, count in emotion_counts.items()
+        }
+        
+        return {
+            "overall_emotion": overall_emotion,
+            "emotion_distribution": emotion_distribution,
+            "emotion_timeline": emotions,
+            "total_analyzed": total_entries
+        }
 
-# Integration with your RealTimeEmotionApp
-class LoggedRealTimeEmotionApp:
-    """Enhanced RealTimeEmotionApp with comprehensive logging"""
-    
-    def _init_(self):
-        # Your existing initialization
-        self.analyzer = None  # Your RealTimeEmotionAnalyzer
-        self.alert_system = None  # Your EmotionAlertSystem
-        
-    async def initialize(self):
-        """Initialize with logging"""
-        self.logger = await get_logger()
-        
-        # Initialize your components here
-        # self.analyzer = RealTimeEmotionAnalyzer()
-        # self.alert_system = EmotionAlertSystem()
-        
-        # Setup alert callback with logging
-        # self.alert_system.add_alert_callback(self._handle_logged_emotion_alert)
-        
-    async def process_transcript_with_logging(self, session_id: str, text: str, 
-                                            speaker: str, is_final: bool = True):
-        """Process transcript with comprehensive logging"""
-        start_time = time.time()
-        
-        try:
-            # Your existing processing logic would go here
-            # result = await self.analyzer.analyze_immediate(entry)
-            
-            # For demo, create a mock result
-            processing_time_ms = (time.time() - start_time) * 1000
-            
-            # Log transcript processing
-            await self.logger.log_transcript_processing(
-                session_id, speaker, text, processing_time_ms, is_final
-            )
-            
-            # Log emotion analysis (with your actual result)
-            # await self.logger.log_emotion_analysis(
-            #     session_id, speaker, result, processing_time_ms
-            # )
-            
-            # Log performance metrics
-            await self.logger.log_performance_metric(
-                "transcript_processing_time_ms", processing_time_ms, session_id
-            )
-            
-            return {"status": "processed", "processing_time_ms": processing_time_ms}
-            
-        except Exception as e:
-            await self.logger.log_error(e, session_id, "transcript_processing")
-            raise
-            
-    async def _handle_logged_emotion_alert(self, alert_type: str, alert_data: Dict[str, Any]):
-        """Handle emotion alerts with logging"""
-        session_id = alert_data.get('session_id')  # You'd need to add this to alert_data
-        
-        await self.logger.log_alert(alert_type, alert_data, session_id)
-        
-        # Your existing alert handling logic
-        # ... existing code ...
 
-# Example usage
-async def demo_logging_system():
-    """Demo the logging system"""
-    logger = await get_logger()
-    
-    # Simulate session
-    session_id = "demo_session_123"
-    
-    async with logger.session_context(session_id, {"user_agent": "demo", "ip": "127.0.0.1"}):
-        
-        # Simulate WebSocket connection
-        await logger.log_websocket_connection(session_id, {"ip": "127.0.0.1"}, connected=True)
-        
-        # Simulate transcript processing
-        await logger.log_transcript_processing(
-            session_id, "Alice", "Hello everyone, I'm excited about this project!", 25.5
-        )
-        
-        # Simulate emotion analysis
-        # You'd use your actual EmotionAnalysisResult here
-        mock_emotion_result = type('MockResult', (), {
-            'primary_emotion': type('Emotion', (), {'value': 'excitement'}),
-            'sentiment_score': 0.8,
-            'confidence': 0.9,
-            'emotional_intensity': 0.7,
-            'valence': 0.8,
-            'arousal': 0.6,
-            'context_influenced': False
-        })()
-        
-        await logger.log_emotion_analysis(session_id, "Alice", mock_emotion_result, 15.2)
-        
-        # Simulate alert
-        await logger.log_alert("high_positive_emotion", {
-            "speaker": "Alice",
-            "emotion": "excitement",
-            "sentiment_score": 0.8,
-            "confidence": 0.9
-        }, session_id)
-        
-        # Simulate API request
-        await logger.log_api_request("/api/analytics", "GET", 200, 45.3, session_id)
-        
-        # WebSocket disconnect
-        await logger.log_websocket_connection(session_id, {"ip": "127.0.0.1"}, connected=False)
-    
-    # Get metrics
-    metrics = logger.get_metrics()
-    print("\nCurrent Metrics:")
-    print(json.dumps(metrics, indent=2))
-    
-    await logger.stop()
+# ---------------- Singleton accessor ---------------- #
+_emotion_service: Optional[EmotionService] = None
 
-if _name_ == "_main_":
-    asyncio.run(demo_logging_system())
+
+def get_emotion_service() -> EmotionService:
+    """Get the singleton emotion service instance."""
+    global _emotion_service
+    if _emotion_service is None:
+        _emotion_service = EmotionService()
+    return _emotion_service
+
+
+# ---------------- Compatibility function ---------------- #
+async def analyze_emotion(
+    text: str,
+    session_id: Optional[str] = None,
+    timestamp: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Legacy compatibility function for emotion analysis.
+    
+    Args:
+        text: Text to analyze
+        session_id: Optional session ID
+        timestamp: Optional timestamp
+        
+    Returns:
+        Dict with emotion analysis including metadata
+    """
+    service = get_emotion_service()
+    result = await service.analyze_text(text)
+    
+    return {
+        "id": f"emo_{uuid.uuid4()}",
+        "session_id": session_id,
+        "timestamp": timestamp or datetime.utcnow().isoformat(),
+        "text": text,
+        "emotion": result["emotion"],
+        "confidence": result["confidence"],
+        "scores": result["scores"]
+    }

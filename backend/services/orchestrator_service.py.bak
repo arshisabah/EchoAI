@@ -1,0 +1,395 @@
+# backend/services/orchestrator_service.py
+"""
+Main orchestrator for the real-time transcript pipeline.
+
+This module contains ALL business and processing logic that was previously
+in the large transcript.py. The API/router file should only call methods from
+the single shared orchestrator instance exposed below.
+"""
+
+import logging
+import asyncio
+import json
+import base64
+import uuid
+from datetime import datetime
+from typing import Dict, Any, List, Optional
+
+import numpy as np
+from fastapi import WebSocket, WebSocketDisconnect
+
+# Adjust these imports to match your project structure if necessary.
+from backend.models.registry import model_registry
+from backend.database.session_store import get_session_store, SessionStore
+from backend.modules.realtime_store import (
+    get_transcript_store,
+    TranscriptEntry,
+    create_session
+)
+from backend.app.services.emotion_analysis import get_emotion_service, analyze_transcript_emotions
+from backend.app.services.speech_to_text import get_stt_service, process_audio_chunk
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------- Connection Manager ---------------- #
+class ConnectionManager:
+    """Manages active WebSocket connections per session."""
+
+    def __init__(self):
+        # map session_id -> {"websocket": WebSocket, "connected_at": datetime, "message_count": int}
+        self.active_connections: Dict[str, Dict[str, Any]] = {}
+
+    async def connect(self, websocket: WebSocket, session_id: str):
+        """Accept and register a websocket connection for a session."""
+        await websocket.accept()
+        self.active_connections[session_id] = {
+            "websocket": websocket,
+            "connected_at": datetime.now(),
+            "message_count": 0,
+        }
+        logger.info(f"WebSocket connected for session: {session_id}")
+
+    def disconnect(self, session_id: str):
+        """Remove connection for a session (if present)."""
+        if session_id in self.active_connections:
+            try:
+                # Attempt a graceful close if possible
+                ws = self.active_connections[session_id].get("websocket")
+                if ws:
+                    asyncio.create_task(ws.close())
+            except Exception:
+                pass
+            del self.active_connections[session_id]
+            logger.info(f"WebSocket disconnected for session: {session_id}")
+
+    async def send_message(self, message: Dict[str, Any], session_id: str):
+        """Send JSON message to the client connected with session_id."""
+        if session_id not in self.active_connections:
+            logger.debug(f"No active connection for session {session_id}, cannot send message")
+            return
+
+        try:
+            websocket: WebSocket = self.active_connections[session_id]["websocket"]
+            await websocket.send_json(message)
+            self.active_connections[session_id]["message_count"] += 1
+        except Exception as e:
+            logger.error(f"Error sending message to {session_id}: {e}", exc_info=True)
+            # If sending fails, drop the connection record
+            self.disconnect(session_id)
+
+    def get_connection_count(self) -> int:
+        return len(self.active_connections)
+
+
+# ---------------- Orchestrator Service ---------------- #
+class OrchestratorService:
+    """
+    OrchestratorService centralizes all business logic for real-time transcription:
+    - WebSocket lifecycle handling
+    - receiving/decoding audio chunks
+    - calling STT/transcription
+    - emotion analysis
+    - session store management
+    - provider switching helpers
+    """
+
+    def __init__(self):
+        # Models/services from registry (if present)
+        try:
+            self.whisper_model = model_registry.get_model("whisper")
+        except Exception:
+            self.whisper_model = None
+
+        try:
+            self.diarization_pipeline = model_registry.get_model("diarization")
+        except Exception:
+            self.diarization_pipeline = None
+
+        try:
+            self.emotion_model_dict = model_registry.get_model("emotion")
+        except Exception:
+            self.emotion_model_dict = None
+
+        self.db_store: Optional[SessionStore] = None
+        self.manager = ConnectionManager()
+        logger.info("OrchestratorService initialized")
+
+    async def _init_db(self):
+        """Lazy initialize DB/session store."""
+        if self.db_store is None:
+            self.db_store = await get_session_store()
+            logger.info("Database session store initialized for OrchestratorService")
+
+    # ---------------- WebSocket entrypoint (called by router) ---------------- #
+    async def handle_connection(self, websocket: WebSocket, session_id: str):
+        """
+        Full lifecycle for a single websocket connection.
+        The router should simply call this and not implement any business logic.
+        """
+        await self.manager.connect(websocket, session_id)
+        await self._init_db()
+
+        # Ensure session exists in transcript store (create if not)
+        store = get_transcript_store()
+        try:
+            create_session(session_id, {"connection_type": "websocket"})
+        except Exception:
+            # create_session may raise if exists; that's fine
+            pass
+
+        # get emotion service
+        emotion_service = get_emotion_service()
+        # maintain a list of speakers observed during this WS connection
+        session_speakers: List[str] = []
+
+        try:
+            while True:
+                # Expect textual JSON messages from client wrapping base64 audio or control messages
+                raw = await websocket.receive_text()
+                message_data = json.loads(raw)
+                message_type = message_data.get("type", "")
+
+                if message_type == "audio_chunk":
+                    await self._handle_audio_chunk(
+                        message_data, session_id, session_speakers, emotion_service
+                    )
+
+                elif message_type == "session_config":
+                    await self._handle_session_config(message_data, session_id)
+
+                elif message_type == "ping":
+                    await self.manager.send_message(
+                        {"type": "pong", "timestamp": datetime.now().isoformat()},
+                        session_id,
+                    )
+
+                else:
+                    logger.warning(f"Unknown message type from client: {message_type}")
+                    # Echo back unknown type warning
+                    await self.manager.send_message(
+                        {"type": "error", "message": f"Unknown message type: {message_type}"},
+                        session_id,
+                    )
+
+        except WebSocketDisconnect:
+            logger.info(f"Client disconnected from session '{session_id}'")
+        except Exception as e:
+            logger.exception(f"Unhandled exception in WebSocket handler for {session_id}: {e}")
+            # Try notifying client before quitting
+            try:
+                await self.manager.send_message(
+                    {"type": "error", "message": str(e)}, session_id
+                )
+            except Exception:
+                pass
+        finally:
+            # ensure cleanup
+            self.manager.disconnect(session_id)
+
+    # ---------------- Core audio processing ---------------- #
+    async def _handle_audio_chunk(
+        self,
+        message_data: Dict[str, Any],
+        session_id: str,
+        session_speakers: List[str],
+        emotion_service,
+    ):
+        """
+        Receives a single audio chunk message, decodes it, runs STT and emotion,
+        stores the transcript entry in the session store, and notifies client.
+        Expected message_data:
+          {
+            "type": "audio_chunk",
+            "audio_data": "<base64>",
+            "sample_rate": 16000,
+            "meta": { ... optional }
+          }
+        """
+        try:
+            audio_base64 = message_data.get("audio_data", "")
+            sample_rate = int(message_data.get("sample_rate", 16000))
+
+            if not audio_base64:
+                await self.manager.send_message(
+                    {"type": "error", "message": "No audio data provided"}, session_id
+                )
+                return
+
+            # decode base64 audio
+            try:
+                audio_bytes = base64.b64decode(audio_base64)
+            except Exception as e:
+                logger.error(f"Failed to decode base64 audio for {session_id}: {e}")
+                await self.manager.send_message(
+                    {"type": "error", "message": "Invalid audio encoding"}, session_id
+                )
+                return
+
+            # Delegate audio processing (STT + diarization if implemented)
+            # process_audio_chunk is expected to return a dict with at least:
+            # { "id", "speaker", "text", "timestamp", "confidence" }
+            # The function is awaited because it might be async.
+            entry_data = await process_audio_chunk(
+                audio_bytes, session_id, sample_rate, session_speakers
+            )
+
+            # If process_audio_chunk returned None -> no speech or skip
+            if entry_data is None:
+                return
+
+            # Emotion analysis (if available)
+            try:
+                emotion_result = await emotion_service.analyze_emotion(entry_data["text"])
+                entry_data.update({
+                    "emotion": emotion_result.primary_emotion.value,
+                    "emotion_confidence": emotion_result.confidence,
+                    "sentiment": emotion_result.sentiment_polarity.value,
+                    "sentiment_score": emotion_result.sentiment_score
+                })
+            except Exception as e:
+                logger.debug(f"Emotion analysis failed for {session_id}: {e}")
+                # keep processing even if emotion fails
+
+            # Create TranscriptEntry object and save it
+            transcript_entry = TranscriptEntry(**entry_data)
+            store = get_transcript_store()
+            saved = store.add_transcript_entry(transcript_entry)
+
+            if saved:
+                # update speaker list for the session
+                if transcript_entry.speaker not in session_speakers:
+                    session_speakers.append(transcript_entry.speaker)
+
+                # Build payload returned to client
+                response_data = {
+                    "type": "transcript_entry",
+                    "entry": transcript_entry.to_dict(),
+                    "emotion_analysis": {
+                        "primary_emotion": entry_data.get("emotion"),
+                        "confidence": entry_data.get("emotion_confidence"),
+                        "sentiment": entry_data.get("sentiment"),
+                        "sentiment_score": entry_data.get("sentiment_score"),
+                    },
+                    "session_stats": {
+                        "total_entries": len(store.get_session_transcript(session_id)),
+                        "speakers": session_speakers,
+                    },
+                }
+
+                await self.manager.send_message(response_data, session_id)
+                logger.info(f"Processed transcript entry for {session_id}: {transcript_entry.text[:50]}...")
+            else:
+                await self.manager.send_message(
+                    {"type": "error", "message": "Failed to store transcript entry"},
+                    session_id,
+                )
+
+        except Exception as e:
+            logger.exception(f"Error handling audio chunk for {session_id}: {e}")
+            await self.manager.send_message(
+                {"type": "error", "message": f"Audio processing failed: {str(e)}"},
+                session_id,
+            )
+
+    # ---------------- Session config handler ---------------- #
+    async def _handle_session_config(self, message_data: Dict[str, Any], session_id: str):
+        """
+        Update session metadata/config. This function will merge provided config into
+        store metadata. The store should implement update_session_metadata if you want persistence.
+        """
+        try:
+            config = message_data.get("config", {})
+            store = get_transcript_store()
+            current_meta = store.get_session_metadata(session_id) or {}
+            merged = {**current_meta, **config}
+            # If your store supports an update method, call it. For now we try to set it via create_session fallback.
+            try:
+                store.update_session_metadata(session_id, merged)  # optional method
+            except Exception:
+                # fallback: recreate session with merged metadata (create_session may ignore if exists)
+                create_session(session_id, merged)
+
+            await self.manager.send_message(
+                {"type": "config_updated", "message": "Session configuration updated"},
+                session_id,
+            )
+        except Exception as e:
+            logger.error(f"Failed to update session config for {session_id}: {e}", exc_info=True)
+            await self.manager.send_message(
+                {"type": "error", "message": "Failed to update session configuration"},
+                session_id,
+            )
+
+    # ---------------- REST-style helpers used by API router ---------------- #
+    async def get_session_transcript(self, session_id: str) -> Dict[str, Any]:
+        store = get_transcript_store()
+        entries = store.get_session_transcript(session_id)
+        metadata = store.get_session_metadata(session_id)
+        return {
+            "session_id": session_id,
+            "transcript": [e.to_dict() for e in entries],
+            "metadata": metadata,
+            "total_entries": len(entries),
+        }
+
+    async def analyze_session_emotions(self, session_id: str) -> Dict[str, Any]:
+        store = get_transcript_store()
+        entries = [e.to_dict() for e in store.get_session_transcript(session_id)]
+        results = await analyze_transcript_emotions(entries)
+        return {
+            "session_id": session_id,
+            "emotion_analysis": results,
+            "analyzed_at": datetime.now().isoformat(),
+        }
+
+    async def create_session(self, session_id: str, metadata: Optional[Dict[str, Any]]):
+        if create_session(session_id, metadata):
+            return {"message": f"Session {session_id} created", "session_id": session_id}
+        raise ValueError("Session already exists")
+
+    async def delete_session(self, session_id: str):
+        store = get_transcript_store()
+        if store.delete_session(session_id):
+            self.manager.disconnect(session_id)
+            return {"message": f"Session {session_id} deleted", "session_id": session_id}
+        raise ValueError("Session not found")
+
+    async def list_sessions(self) -> Dict[str, Any]:
+        store = get_transcript_store()
+        sessions = store.list_sessions()
+        details = []
+        for sid in sessions:
+            details.append({
+                "session_id": sid,
+                "metadata": store.get_session_metadata(sid),
+                "transcript_entries": len(store.get_session_transcript(sid)),
+                "is_connected": sid in self.manager.active_connections,
+            })
+        return {
+            "sessions": details,
+            "total_sessions": len(sessions),
+            "active_connections": self.manager.get_connection_count(),
+        }
+
+    async def get_stt_providers(self) -> Dict[str, Any]:
+        stt = get_stt_service()
+        return {
+            "available_providers": stt.get_available_providers(),
+            "primary_provider": stt.primary_provider,
+        }
+
+    async def set_primary_stt_provider(self, provider_name: str):
+        stt = get_stt_service()
+        if stt.set_primary_provider(provider_name):
+            return {"message": f"Primary STT provider set to {provider_name}"}
+        raise ValueError(f"Provider {provider_name} not available")
+
+
+# ---------------- Shared instance / DI ---------------- #
+orchestrator_instance = OrchestratorService()
+
+
+def get_orchestrator() -> OrchestratorService:
+    """Return the global orchestrator instance for importers (router) to use."""
+    return orchestrator_instance

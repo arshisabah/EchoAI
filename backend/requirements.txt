@@ -1,9 +1,36 @@
+# torch
+# torchaudio
+# torchvision
+# openai-whisper
+# pyannote.audio
+# transformers
+# huggingface_hub
+# pydub
+# ffmpeg
+# requirements.txt
+
+# --- Core Framework ---
+fastapi
+uvicorn[standard]
+
+# --- AI & Machine Learning ---
 torch
 torchaudio
-torchvision
-openai-whisper
-pyannote.audio
 transformers
-huggingface_hub
-pydub
-ffmpeg
+openai-whisper         # For speech-to-text
+pyannote.audio         # For speaker diarization
+sentence-transformers  # For resume_matcher embeddings
+scikit-learn           # For cosine_similarity in resume_matcher
+
+# --- Database Connectors (install only what you need) ---
+asyncpg                # For PostgreSQL
+motor                  # For MongoDB
+redis                  # For scalable state management (recommended)
+
+# --- API & Utility Libraries ---
+python-dotenv          # For loading .env files
+openai                 # Client for OpenAI API (Summaries, Whisper API)
+anthropic              # Client for Anthropic API (Summaries)
+pydub                  # For audio manipulation (used in diarization script)
+aiofiles               # For async file operations (recommended for file_utils)
+huggingface_hub        # For downloading models from Hugging Face
