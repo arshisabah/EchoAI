@@ -1,6 +1,6 @@
 # backend/modules/sentiment_analysis.py
 
-from backend.models.sentiment.loader import load_sentiment_model
+from app.models.sentiment.loader import load_sentiment_model
 
 print("Initializing sentiment analysis module...")
 emotion_classifier = load_sentiment_model()

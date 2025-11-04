@@ -1,6 +1,6 @@
 # backend/modules/diarization.py
 
-from backend.models.diarization.loader import load_diarization_pipeline
+from app.models.diarization.loader import load_diarization_pipeline
 import os
 
 # NOTE: It's better to load the token from a central config or environment variables

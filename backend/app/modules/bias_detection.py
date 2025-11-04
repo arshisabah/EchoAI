@@ -1,7 +1,7 @@
 # backend/modules/bias_detection.py
 
 # 1. Import the loader and other necessary libraries
-from backend.models.bias.loader import load_bias_model
+from models.bias.loader import load_bias_model
 import torch
 
 # 2. Load the model and tokenizer

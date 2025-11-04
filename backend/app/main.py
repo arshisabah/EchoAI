@@ -13,13 +13,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # --- 1. Import all centralized components ---
-from backend.core.config import settings
-from backend.core.logging_config import setup_logging
-from backend.models.registry import model_registry
-from backend.database.session_store import get_session_store
+from app.core.config import settings
+from app.core.logging_config import setup_logging
+from app.models.registry import model_registry
+from app.database.session_store import get_session_store
 
 # --- 2. Import all your API routers ---
-from backend.routers import transcript, summary, analytics
+from app.routers import transcript, summary, analytics
 
 # --- 3. Setup Logging ---
 # This should be the very first thing to run so that all subsequent
@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
     This is the modern replacement for @app.on_event("startup").
     """
     # --- Code to run on server startup ---
-    logger.info("🚀 Starting EchoAI Backend...")
+    logger.info(" Starting EchoAI Backend...")
     
     # 1. Load all AI models into the central registry. This is a slow
     #    process that should only happen once.
@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
     # 2. Initialize the database connection pool and store it in the app's
     #    state, making it accessible to other parts of the application.
     app.state.db_store = await get_session_store()
-    logger.info(f"✅ Database ({settings.SESSION_STORE_TYPE}) and AI models loaded successfully.")
+    logger.info(f" Database ({settings.SESSION_STORE_TYPE}) and AI models loaded successfully.")
     
     yield # The application is now running and ready to accept requests
     

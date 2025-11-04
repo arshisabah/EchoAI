@@ -1,7 +1,7 @@
 # backend/modules/resume_matcher.py
 
 # 1. Import the loader and similarity function
-from backend.models.embedding.loader import load_embedding_model
+from app.models.embedding.loader import load_embedding_model
 from sklearn.metrics.pairwise import cosine_similarity
 
 # 2. Load the embedding model

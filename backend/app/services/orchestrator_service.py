@@ -17,11 +17,11 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 import numpy as np
 
-from backend.services.transcription_service import get_transcription_service, process_audio_chunk_whisperx
-from backend.services.emotion_service import get_emotion_service
-from backend.services.summary_service import get_summary_service
-from backend.services.speaker_identification_service import get_speaker_service
-from backend.services.audio_utils import bytes_to_numpy
+from app.services.transcription_service import get_transcription_service, process_audio_chunk_whisperx
+from app.services.emotion_analysis import get_emotion_service
+from app.services.summary_service import get_summary_service
+from app.services.speaker_identification_service import get_speaker_service
+from app.services.audio_utils import bytes_to_numpy
 
 logger = logging.getLogger(__name__)
 logging.getLogger("asyncio").setLevel(logging.WARNING)

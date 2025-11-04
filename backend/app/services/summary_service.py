@@ -14,13 +14,13 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 import json
-
+from app.core.config import settings
 from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
 # Initialize OpenAI client
-client = AsyncOpenAI()
+client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
 # Summary modes
 SUMMARY_MODES = {

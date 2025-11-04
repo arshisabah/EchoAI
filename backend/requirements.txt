@@ -8,7 +8,8 @@
 # pydub
 # ffmpeg
 # requirements.txt
-
+asyncpg
+motor
 # --- Core Framework ---
 fastapi
 uvicorn[standard]
@@ -34,3 +35,10 @@ anthropic              # Client for Anthropic API (Summaries)
 pydub                  # For audio manipulation (used in diarization script)
 aiofiles               # For async file operations (recommended for file_utils)
 huggingface_hub        # For downloading models from Hugging Face
+
+# --- WhisperX (Main Transcription Engine) ---
+git+https://github.com/m-bain/whisperX.git
+
+torch==2.4.0+cpu
+torchaudio==2.4.0+cpu
+--extra-index-url https://download.pytorch.org/whl/cpu

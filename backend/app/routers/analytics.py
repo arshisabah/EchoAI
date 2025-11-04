@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 # Import our services
-from modules.realtime_store import get_transcript_store
+from app.modules.realtime_store import realtime_store
 from app.services.emotion_analysis import (
     get_emotion_service, 
     analyze_transcript_emotions
@@ -76,7 +76,7 @@ async def get_basic_analytics(session_id: str):
     Get basic analytics for a session (backward compatibility).
     """
     try:
-        store = get_transcript_store()
+        store = realtime_store()
         
         if session_id not in store.list_sessions():
             raise HTTPException(status_code=404, detail="Session not found")

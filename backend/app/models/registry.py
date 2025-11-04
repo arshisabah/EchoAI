@@ -12,14 +12,14 @@ import logging
 from typing import Dict, Any
 
 # Import the central configuration
-from backend.core.config import settings
+from app.core.config import settings
 
 # Import the individual model loader functions
-from .whisper_loader import load_whisper_model
-from .diarization_loader import load_diarization_pipeline
-from .emotion_loader import load_emotion_model
-from .summarizer_loader import load_summarizer_model
-from .bias_loader import load_bias_model
+from .whisper.loader import load_whisper_model
+from .diarization.loader import load_diarization_pipeline
+from .wav2vec.emotion_loader import load_emotion_model
+from .summarizer.loader import load_summarizer_model
+from .bias.loader import load_bias_model
 
 logger = logging.getLogger(__name__)
 

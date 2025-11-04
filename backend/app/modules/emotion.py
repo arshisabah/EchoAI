@@ -1,7 +1,7 @@
 # backend/modules/emotion.py
 
 # 1. Import loaders and necessary libraries
-from backend.models.wav2vec.emotion_loader import load_emotion_model
+from app.models.wav2vec.emotion_loader import load_emotion_model
 import torch
 import librosa
 

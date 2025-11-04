@@ -10,6 +10,7 @@ import asyncio
 from collections import defaultdict
 import csv
 import io
+from enum import Enum
 
 from fastapi import APIRouter, HTTPException, Query, Body, BackgroundTasks
 from pydantic import BaseModel, Field
@@ -18,7 +19,7 @@ from pydantic import BaseModel, Field
 # In a real application, these would be your actual service and model implementations.
 # For this example to be self-contained, we will create dummy versions.
 
-class SummaryType:
+class SummaryType(str, Enum):
     BRIEF = "brief"
     DETAILED = "detailed"
     BULLET_POINTS = "bullet_points"

@@ -5,11 +5,11 @@ This is the central point for managing service dependencies for FastAPI.
 """
 
 from openai import AsyncOpenAI
-from backend.core.config import settings
+from app.core.config import settings
 
 # 1. Import all the service CLASSES
 from .transcription_service import TranscriptionService
-from .emotion_service import EmotionService
+from .emotion_analysis import EmotionService
 from .summary_service import SummaryService
 from .orchestrator_service import OrchestratorService
 

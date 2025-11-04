@@ -1,7 +1,7 @@
 # backend/modules/summarizer.py
 
 import re
-from backend.models.summarizer.loader import load_summarizer_model
+from app.models.summarizer.loader import load_summarizer_model
 
 class Summarizer:
     def __init__(self):
