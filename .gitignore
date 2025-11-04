@@ -36,7 +36,6 @@ logs/
 *.npz
 *.npy
 checkpoints/
-models/
 output/
 tmp/
 *.wav
@@ -73,3 +72,5 @@ reports/
 venv/
 __pycache__/
 *.pyc
+backend/.env
+backend/.env
