@@ -1,126 +1,56 @@
-
+# backend/routers/transcript.py
 """
-Updated transcript router with real speech-to-text integration.
-Handles real-time audio processing and transcript generation.
+Transcript router - handles WebSocket connections and transcript endpoints.
 """
 
 import logging
-import asyncio
 import json
-import uuid
+import base64
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
+from fastapi import (
+    APIRouter,
+    WebSocket,
+    WebSocketDisconnect,
+    HTTPException,
+    UploadFile,
+    File,
+    Form,
+)
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.responses import JSONResponse
-import numpy as np
 
-# Import our new services
-from modules.realtime_store import (
-    get_transcript_store, 
-    TranscriptEntry, 
-    create_session
-)
-from app.services.speech_to_text import (
-    get_stt_service, 
-    process_audio_chunk
-)
-from app.services.emotion_analysis import (
-    get_emotion_service,
-    analyze_transcript_emotions
-)
+from app.modules.realtime_store import get_transcript_store, create_session
+from app.services.orchestrator_service import get_orchestrator_service,SessionData
 from app.models.api_models import (
     TranscriptEntryResponse,
-    WebSocketMessage,
+    SessionInfoResponse,
     ErrorResponse,
     SuccessResponse
 )
 
-# Configure logging
 logger = logging.getLogger(__name__)
-
 router = APIRouter(prefix="/transcript", tags=["transcript"])
 
-# Active WebSocket connections
-active_connections: Dict[str, WebSocket] = {}
-
-class ConnectionManager:
-    """Manages WebSocket connections for real-time transcript streaming"""
-    
-    def __init__(self):
-        self.active_connections: Dict[str, Dict[str, Any]] = {}
-    
-    async def connect(self, websocket: WebSocket, session_id: str):
-        """Accept new WebSocket connection"""
-        await websocket.accept()
-        self.active_connections[session_id] = {
-            "websocket": websocket,
-            "connected_at": datetime.now(),
-            "message_count": 0
-        }
-        logger.info(f"WebSocket connected for session: {session_id}")
-    
-    def disconnect(self, session_id: str):
-        """Remove WebSocket connection"""
-        if session_id in self.active_connections:
-            del self.active_connections[session_id]
-            logger.info(f"WebSocket disconnected for session: {session_id}")
-    
-    async def send_personal_message(self, message: Dict[str, Any], session_id: str):
-        """Send message to specific session"""
-        if session_id in self.active_connections:
-            try:
-                connection_info = self.active_connections[session_id]
-                websocket = connection_info["websocket"]
-                
-                # Create WebSocket message
-                ws_message = WebSocketMessage(
-                    type="transcript_update",
-                    session_id=session_id,
-                    data=message
-                )
-                
-                await websocket.send_text(ws_message.json())
-                connection_info["message_count"] += 1
-                
-            except Exception as e:
-                logger.error(f"Error sending message to {session_id}: {e}")
-                self.disconnect(session_id)
-    
-    async def broadcast_to_session(self, message: Dict[str, Any], session_id: str):
-        """Broadcast message to all connections for a session"""
-        await self.send_personal_message(message, session_id)
-    
-    def get_connection_count(self) -> int:
-        """Get number of active connections"""
-        return len(self.active_connections)
-
-# Global connection manager
-manager = ConnectionManager()
 
 @router.websocket("/ws/{session_id}")
 async def websocket_transcript_endpoint(websocket: WebSocket, session_id: str):
     """
-    WebSocket endpoint for real-time transcript streaming.
-    Accepts audio chunks and returns real-time transcription.
+    WebSocket endpoint for real-time transcription.
+    Client sends base64-encoded audio chunks, receives transcript updates.
     """
-    await manager.connect(websocket, session_id)
+    await websocket.accept()
+    logger.info(f"WebSocket connected for session: {session_id}")
     
-    # Initialize session in transcript store
-    store = get_transcript_store()
-    session_metadata = {
-        "connection_type": "websocket",
-        "client_ip": websocket.client.host if websocket.client else "unknown"
-    }
+    # Create session if doesn't exist
+    try:
+        create_session(session_id, {"connection_type": "websocket"})
+    except Exception as e:
+        logger.warning(f"Session creation warning: {e}")
     
-    if not store.create_session(session_id, session_metadata):
-        logger.warning(f"Session {session_id} already exists, continuing...")
+    orchestrator = get_orchestrator_service()
     
     try:
-        # Get services
-        emotion_service = get_emotion_service()
-        session_speakers = []
-        
         while True:
             # Receive message from client
             data = await websocket.receive_text()
@@ -129,193 +59,109 @@ async def websocket_transcript_endpoint(websocket: WebSocket, session_id: str):
             message_type = message_data.get("type")
             
             if message_type == "audio_chunk":
-                await handle_audio_chunk(
-                    message_data, 
-                    session_id, 
-                    session_speakers,
-                    emotion_service
-                )
+                # Process audio chunk
+                audio_base64 = message_data.get("audio_data", "")
                 
-            elif message_type == "session_config":
-                await handle_session_config(message_data, session_id)
+                if not audio_base64:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "No audio data provided"
+                    })
+                    continue
                 
-            elif message_type == "ping":
-                await manager.send_personal_message(
-                    {"type": "pong", "timestamp": datetime.now().isoformat()},
+                try:
+                    audio_bytes = base64.b64decode(audio_base64)
+                except Exception as e:
+                    logger.error(f"Failed to decode audio: {e}")
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Invalid audio encoding"
+                    })
+                    continue
+                
+                # Process through orchestrator
+                result = await orchestrator.process_audio_chunk(
+                    audio_bytes, 
                     session_id
                 )
-            
+                
+                if result:
+                    await websocket.send_json({
+                        "type": "transcript_entry",
+                        "data": result
+                    })
+                    
+            elif message_type == "ping":
+                await websocket.send_json({
+                    "type": "pong",
+                    "timestamp": datetime.now().isoformat()
+                })
+                
             else:
                 logger.warning(f"Unknown message type: {message_type}")
                 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for session: {session_id}")
-        
     except Exception as e:
         logger.error(f"WebSocket error for session {session_id}: {e}")
-        error_message = {
-            "type": "error",
-            "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }
         try:
-            await manager.send_personal_message(error_message, session_id)
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e)
+            })
         except:
-            pass  # Connection might be closed
-            
-    finally:
-        manager.disconnect(session_id)
+            pass
 
-async def handle_audio_chunk(
-    message_data: Dict[str, Any], 
-    session_id: str, 
-    session_speakers: List[str],
-    emotion_service
+@router.post("/process")
+async def process_transcription(
+    file: UploadFile = File(...),
+    session_id: str = Form(...)
 ):
-    """Handle incoming audio chunk and process it"""
+    """
+    Upload and transcribe an audio file for a given session.
+    Automatically ensures the session exists in orchestrator memory.
+    """
     try:
-        # Extract audio data (assuming base64 encoded audio)
-        import base64
-        audio_base64 = message_data.get("audio_data", "")
-        sample_rate = message_data.get("sample_rate", 16000)
-        
-        if not audio_base64:
-            await manager.send_personal_message(
-                {"type": "error", "message": "No audio data provided"},
-                session_id
-            )
-            return
-        
-        # Decode audio data
-        try:
-            audio_bytes = base64.b64decode(audio_base64)
-        except Exception as e:
-            logger.error(f"Failed to decode audio data: {e}")
-            await manager.send_personal_message(
-                {"type": "error", "message": "Invalid audio data encoding"},
-                session_id
-            )
-            return
-        
-        # Process audio chunk
-        entry_data = await process_audio_chunk(
-            audio_bytes,
-            session_id,
-            sample_rate,
-            session_speakers
-        )
-        
-        if entry_data is None:
-            # No speech detected or processing failed
-            return
-        
-        # Analyze emotion for the transcript text
-        emotion_result = await emotion_service.analyze_emotion(entry_data["text"])
-        
-        # Add emotion data to entry
-        entry_data["emotion"] = emotion_result.primary_emotion.value
-        entry_data["emotion_confidence"] = emotion_result.confidence
-        entry_data["sentiment"] = emotion_result.sentiment_polarity.value
-        entry_data["sentiment_score"] = emotion_result.sentiment_score
-        
-        # Create transcript entry
-        transcript_entry = TranscriptEntry(**entry_data)
-        
-        # Add to store
-        store = get_transcript_store()
-        success = store.add_transcript_entry(transcript_entry)
-        
-        if success:
-            # Update session speakers list
-            if transcript_entry.speaker not in session_speakers:
-                session_speakers.append(transcript_entry.speaker)
-            
-            # Send real-time update to client
-            response_data = {
-                "type": "transcript_entry",
-                "entry": transcript_entry.to_dict(),
-                "emotion_analysis": {
-                    "primary_emotion": emotion_result.primary_emotion.value,
-                    "confidence": emotion_result.confidence,
-                    "sentiment": emotion_result.sentiment_polarity.value,
-                    "sentiment_score": emotion_result.sentiment_score,
-                    "emotional_intensity": emotion_result.emotional_intensity
-                },
-                "session_stats": {
-                    "total_entries": len(store.get_session_transcript(session_id)),
-                    "speakers": session_speakers
-                }
-            }
-            
-            await manager.send_personal_message(response_data, session_id)
-            
-            logger.info(f"Processed transcript entry for {session_id}: {transcript_entry.text[:50]}...")
-            
-        else:
-            await manager.send_personal_message(
-                {"type": "error", "message": "Failed to store transcript entry"},
-                session_id
-            )
-            
-    except Exception as e:
-        logger.error(f"Error handling audio chunk for {session_id}: {e}")
-        await manager.send_personal_message(
-            {"type": "error", "message": f"Audio processing failed: {str(e)}"},
-            session_id
-        )
+        audio_bytes = await file.read()
+        if not audio_bytes:
+            raise HTTPException(status_code=400, detail="Empty audio file uploaded")
 
-async def handle_session_config(message_data: Dict[str, Any], session_id: str):
-    """Handle session configuration updates"""
-    try:
-        config = message_data.get("config", {})
-        
-        # Update session metadata
-        store = get_transcript_store()
-        current_metadata = store.get_session_metadata(session_id)
-        
-        if current_metadata:
-            # Update with new config
-            updated_metadata = {**current_metadata, **config}
-            # Note: We'd need to add an update_session_metadata method to the store
-            
-        await manager.send_personal_message(
-            {
-                "type": "config_updated",
-                "message": "Session configuration updated successfully"
-            },
-            session_id
-        )
-        
+        orchestrator = get_orchestrator_service()
+
+        # ✅ Correct: use the imported SessionData class
+        if session_id not in orchestrator.active_sessions:
+            orchestrator.active_sessions[session_id] = SessionData(session_id)
+            logger.info(f"Created new session in orchestrator: {session_id}")
+
+        # Process the uploaded audio
+        result = await orchestrator.process_audio_chunk(audio_bytes, session_id)
+
+        if not result:
+            return {"message": "No speech detected or transcription failed"}
+
+        return {
+            "session_id": session_id,
+            "results": [result],
+            "status": "success"
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error updating session config for {session_id}: {e}")
-        await manager.send_personal_message(
-            {"type": "error", "message": "Failed to update session configuration"},
-            session_id
-        )
+        logger.exception(f"Transcription error for session {session_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/session/{session_id}")
 async def get_session_transcript(session_id: str):
-    """Get complete transcript for a session"""
+    """Get complete transcript for a session."""
     try:
-        store = get_transcript_store()
-        transcript_entries = store.get_session_transcript(session_id)
-        session_metadata = store.get_session_metadata(session_id)
+        orchestrator = get_orchestrator_service()
+        result = await orchestrator.get_session_transcript(session_id)
         
-        if not transcript_entries and not session_metadata:
-            raise HTTPException(status_code=404, detail="Session not found")
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
         
-        # Convert entries to response format
-        entries_response = [
-            TranscriptEntryResponse(**entry.to_dict()) 
-            for entry in transcript_entries
-        ]
-        
-        return {
-            "session_id": session_id,
-            "transcript": entries_response,
-            "metadata": session_metadata,
-            "total_entries": len(transcript_entries)
-        }
+        return result
         
     except HTTPException:
         raise
@@ -323,71 +169,35 @@ async def get_session_transcript(session_id: str):
         logger.error(f"Error getting session transcript {session_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.get("/session/{session_id}/emotions")
-async def get_session_emotions(session_id: str):
-    """Get emotion analysis for all entries in a session"""
-    try:
-        store = get_transcript_store()
-        transcript_entries = store.get_session_transcript(session_id)
-        
-        if not transcript_entries:
-            raise HTTPException(status_code=404, detail="Session not found")
-        
-        # Convert to dict format for emotion analysis
-        entries_dict = [entry.to_dict() for entry in transcript_entries]
-        
-        # Analyze emotions
-        emotion_results = await analyze_transcript_emotions(entries_dict)
-        
-        return {
-            "session_id": session_id,
-            "emotion_analysis": emotion_results,
-            "analyzed_at": datetime.now().isoformat()
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error analyzing emotions for session {session_id}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/session/{session_id}/create")
 async def create_transcript_session(
     session_id: str,
     metadata: Optional[Dict[str, Any]] = None
 ):
-    """Create a new transcript session"""
+    """Create a new transcript session."""
     try:
-        success = create_session(session_id, metadata)
+        orchestrator = get_orchestrator_service()
+        result = await orchestrator.start_session(session_id)
         
-        if success:
-            return SuccessResponse(
-                message=f"Session {session_id} created successfully",
-                session_id=session_id
-            )
-        else:
-            raise HTTPException(
-                status_code=409, 
-                detail="Session already exists"
-            )
-            
-    except HTTPException:
-        raise
+        return {
+            "status": "created",
+            "session_id": session_id,
+            "result": result
+        }
+
     except Exception as e:
         logger.error(f"Error creating session {session_id}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/session/{session_id}")
 async def delete_transcript_session(session_id: str):
-    """Delete a transcript session"""
+    """Delete a transcript session."""
     try:
         store = get_transcript_store()
         success = store.delete_session(session_id)
         
         if success:
-            # Also disconnect any active WebSocket connections
-            manager.disconnect(session_id)
-            
             return SuccessResponse(
                 message=f"Session {session_id} deleted successfully",
                 session_id=session_id
@@ -401,70 +211,74 @@ async def delete_transcript_session(session_id: str):
         logger.error(f"Error deleting session {session_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+
 @router.get("/sessions")
 async def list_sessions():
-    """List all active sessions"""
+    """List all active sessions."""
     try:
-        store = get_transcript_store()
-        sessions = store.list_sessions()
-        
-        session_details = []
-        for session_id in sessions:
-            metadata = store.get_session_metadata(session_id)
-            transcript_count = len(store.get_session_transcript(session_id))
-            
-            session_details.append({
-                "session_id": session_id,
-                "metadata": metadata,
-                "transcript_entries": transcript_count,
-                "is_connected": session_id in manager.active_connections
-            })
+        orchestrator = get_orchestrator_service()
+        sessions = orchestrator.list_active_sessions()
         
         return {
-            "sessions": session_details,
-            "total_sessions": len(sessions),
-            "active_connections": manager.get_connection_count()
+            "sessions": sessions,
+            "total_sessions": len(sessions)
         }
         
     except Exception as e:
         logger.error(f"Error listing sessions: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.get("/providers/stt")
-async def get_stt_providers():
-    """Get available speech-to-text providers"""
+
+@router.get("/session/{session_id}/summary")
+async def get_session_summary(session_id: str, last_n_entries: int = 10):
+    """Get real-time summary of recent conversation."""
     try:
-        stt_service = get_stt_service()
-        providers = stt_service.get_available_providers()
+        orchestrator = get_orchestrator_service()
+        summary = await orchestrator.generate_realtime_summary(
+            session_id, 
+            last_n_entries
+        )
         
-        return {
-            "available_providers": providers,
-            "primary_provider": stt_service.primary_provider
-        }
+        return summary
         
     except Exception as e:
-        logger.error(f"Error getting STT providers: {e}")
+        logger.error(f"Error generating summary for {session_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.post("/providers/stt/{provider_name}")
-async def set_primary_stt_provider(provider_name: str):
-    """Set the primary speech-to-text provider"""
+
+@router.get("/session/{session_id}/insights")
+async def get_session_insights(session_id: str):
+    """Get comprehensive insights for a session."""
     try:
-        stt_service = get_stt_service()
-        success = stt_service.set_primary_provider(provider_name)
+        orchestrator = get_orchestrator_service()
+        insights = await orchestrator.generate_session_insights(session_id)
         
-        if success:
-            return SuccessResponse(
-                message=f"Primary STT provider set to {provider_name}"
-            )
-        else:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Provider {provider_name} not available"
-            )
-            
+        if "error" in insights:
+            raise HTTPException(status_code=404, detail=insights["error"])
+        
+        return insights
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error setting STT provider: {e}")
+        logger.error(f"Error generating insights for {session_id}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/session/{session_id}/close")
+async def close_session(session_id: str):
+    """Close a session and generate final summary."""
+    try:
+        orchestrator = get_orchestrator_service()
+        result = await orchestrator.close_session(session_id)
+        
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error closing session {session_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")

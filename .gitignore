@@ -71,5 +71,5 @@ Thumbs.db
 reports/
 venv/
 __pycache__/
-*.pyc/
-*.env
+*.pyc
+backend/.env

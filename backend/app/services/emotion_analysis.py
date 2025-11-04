@@ -1,12 +1,6 @@
-# backend/services/emotion_service.py
+# backend/services/emotion_analysis.py
 """
-Emotion Analysis Service for EchoAI.
-
-Responsibilities:
-- Analyze emotion from transcribed text using LLM
-- Provide confidence scores for detected emotions
-- Support both real-time and batch processing
-- Return structured emotion data
+Emotion Analysis Service for EchoAI - Uses OpenAI GPT-4o-mini.
 """
 
 import logging
@@ -14,38 +8,15 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 import json
-from app.core.config import settings
-from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
-# Initialize OpenAI client
-client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-
 # Supported emotion labels
 SUPPORTED_EMOTIONS = [
-    "happy",
-    "sad", 
-    "angry",
-    "neutral",
-    "excited",
-    "frustrated",
-    "confused",
-    "surprised",
-    "bored",
-    "anxious",
-    "confident",
-    "disappointed"
+    "happy", "sad", "angry", "neutral", "excited",
+    "frustrated", "confused", "surprised", "bored",
+    "anxious", "confident", "disappointed"
 ]
-
-
-class EmotionResult:
-    """Container for emotion analysis results."""
-    
-    def __init__(self, emotion: str, confidence: float, scores: Dict[str, float] = None):
-        self.emotion = emotion
-        self.confidence = confidence
-        self.scores = scores or {}
 
 
 class EmotionService:
@@ -53,17 +24,22 @@ class EmotionService:
 
     def __init__(self):
         self.supported_emotions = SUPPORTED_EMOTIONS
-        logger.info("EmotionService initialized with OpenAI GPT-4o-mini")
+        self._client = None  # Lazy initialization
+        logger.info("EmotionService initialized (OpenAI client lazy-loaded)")
+
+    def _get_client(self):
+        """Lazy load OpenAI client."""
+        if self._client is None:
+            from openai import AsyncOpenAI
+            from app.core.config import settings
+            self._client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        return self._client
 
     async def analyze_text(self, text: str) -> Dict[str, Any]:
         """
-        Analyze emotion from a chunk of transcribed text.
-
-        Args:
-            text (str): The transcribed text to analyze
-
-        Returns:
-            dict: Contains 'emotion', 'confidence', and 'scores'
+        Analyze emotion from text.
+        
+        Returns dict with 'emotion', 'confidence', and 'scores'.
         """
         if not text.strip():
             return {
@@ -73,24 +49,23 @@ class EmotionService:
             }
 
         try:
-            # Create prompt for emotion classification
+            client = self._get_client()
             emotions_str = ", ".join(self.supported_emotions)
+            
             prompt = (
                 "Analyze the emotion in the following text. "
-                f"Choose from these emotions: {emotions_str}. "
-                "Respond with a JSON object containing:\n"
-                "- 'emotion': the primary emotion (string)\n"
-                "- 'confidence': confidence score 0-1 (float)\n"
-                "- 'scores': object with all emotions and their scores 0-1 (object)\n\n"
-                f"Text to analyze: \"{text}\""
+                f"Choose from: {emotions_str}. "
+                "Respond with JSON: {'emotion': '...', 'confidence': 0-1, "
+                "'scores': {emotion: score}}.\n\n"
+                f"Text: \"{text}\""
             )
 
             response = await client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {
-                        "role": "system", 
-                        "content": "You are an expert emotion detection assistant. Always respond with valid JSON."
+                        "role": "system",
+                        "content": "You are an emotion detection expert. Respond only with valid JSON."
                     },
                     {"role": "user", "content": prompt}
                 ],
@@ -100,20 +75,20 @@ class EmotionService:
 
             content = response.choices[0].message.content.strip()
             
-            # Parse the JSON response
             try:
                 result = json.loads(content)
                 emotion = result.get("emotion", "neutral").lower()
                 confidence = float(result.get("confidence", 0.5))
                 scores = result.get("scores", {})
                 
-                # Validate emotion is in supported list
                 if emotion not in self.supported_emotions:
                     emotion = "neutral"
                     confidence = 0.3
                 
-                # Ensure all emotions have scores
-                complete_scores = {emo: scores.get(emo, 0.0) for emo in self.supported_emotions}
+                complete_scores = {
+                    emo: scores.get(emo, 0.0) 
+                    for emo in self.supported_emotions
+                }
                 
                 return {
                     "emotion": emotion,
@@ -122,8 +97,8 @@ class EmotionService:
                 }
                 
             except json.JSONDecodeError as e:
-                logger.warning(f"Failed to parse emotion JSON: {content}, error: {e}")
-                return self._fallback_emotion_analysis(text, content)
+                logger.warning(f"JSON parse error: {e}")
+                return self._fallback_emotion_analysis(text)
 
         except Exception as e:
             logger.error(f"Emotion analysis failed: {e}")
@@ -133,150 +108,144 @@ class EmotionService:
                 "scores": {emotion: 0.0 for emotion in self.supported_emotions}
             }
 
-    def _fallback_emotion_analysis(self, text: str, response_content: str) -> Dict[str, Any]:
-        """Fallback emotion detection using keyword matching."""
+    def _fallback_emotion_analysis(self, text: str) -> Dict[str, Any]:
+        """Simple keyword-based fallback."""
         text_lower = text.lower()
-        response_lower = response_content.lower()
         
-        # Simple keyword-based emotion detection
         emotion_keywords = {
-            "happy": ["happy", "joy", "excited", "great", "awesome", "wonderful", "good"],
-            "sad": ["sad", "down", "depressed", "unhappy", "disappointed"],
-            "angry": ["angry", "mad", "furious", "upset", "irritated"],
+            "happy": ["happy", "joy", "excited", "great", "awesome"],
+            "sad": ["sad", "down", "depressed", "unhappy"],
+            "angry": ["angry", "mad", "furious", "upset"],
             "frustrated": ["frustrated", "annoyed", "stressed"],
-            "confused": ["confused", "unclear", "don't understand"],
-            "surprised": ["surprised", "shocked", "wow", "unexpected"],
-            "bored": ["bored", "tired", "uninterested"],
-            "anxious": ["anxious", "worried", "nervous", "concerned"],
-            "confident": ["confident", "sure", "certain", "strong"]
+            "confused": ["confused", "unclear", "don't understand"]
         }
         
-        detected_emotion = "neutral"
+        detected = "neutral"
         confidence = 0.3
         
-        # Check for emotion keywords in text or response
         for emotion, keywords in emotion_keywords.items():
-            if any(keyword in text_lower for keyword in keywords):
-                detected_emotion = emotion
+            if any(kw in text_lower for kw in keywords):
+                detected = emotion
                 confidence = 0.6
-                break
-            elif any(keyword in response_lower for keyword in keywords):
-                detected_emotion = emotion
-                confidence = 0.4
                 break
         
         return {
-            "emotion": detected_emotion,
+            "emotion": detected,
             "confidence": confidence,
-            "scores": {emotion: (0.6 if emotion == detected_emotion else 0.1) for emotion in self.supported_emotions}
+            "scores": {
+                e: (0.6 if e == detected else 0.1) 
+                for e in self.supported_emotions
+            }
         }
 
     async def analyze_batch(self, texts: List[str]) -> List[Dict[str, Any]]:
-        """
-        Analyze emotions for multiple text chunks.
-        
-        Args:
-            texts: List of text strings to analyze
-            
-        Returns:
-            List of emotion analysis results
-        """
-        results = []
-        for text in texts:
-            result = await self.analyze_text(text)
-            results.append(result)
-        return results
+        """Analyze multiple texts."""
+        return [await self.analyze_text(text) for text in texts]
 
-    async def analyze_session_emotions(self, transcript_entries: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Analyze emotions across an entire session.
-        
-        Args:
-            transcript_entries: List of transcript dictionaries with 'text' field
-            
-        Returns:
-            Dict with session emotion summary
-        """
+    async def analyze_session_emotions(
+        self, 
+        transcript_entries: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Analyze emotions for an entire session."""
         if not transcript_entries:
             return {
                 "overall_emotion": "neutral",
-                "emotion_distribution": {emotion: 0.0 for emotion in self.supported_emotions},
+                "emotion_distribution": {e: 0.0 for e in self.supported_emotions},
                 "emotion_timeline": []
             }
         
         emotions = []
-        emotion_counts = {emotion: 0 for emotion in self.supported_emotions}
+        emotion_counts = {e: 0 for e in self.supported_emotions}
         
         for entry in transcript_entries:
-            if not entry.get("text"):
+            text = entry.get("text", "")
+            if not text:
                 continue
                 
-            emotion_result = await self.analyze_text(entry["text"])
+            result = await self.analyze_text(text)
             emotions.append({
                 "timestamp": entry.get("timestamp", datetime.utcnow().isoformat()),
                 "speaker": entry.get("speaker", "Unknown"),
-                "emotion": emotion_result["emotion"],
-                "confidence": emotion_result["confidence"]
+                "emotion": result["emotion"],
+                "confidence": result["confidence"]
             })
             
-            emotion_counts[emotion_result["emotion"]] += 1
+            emotion_counts[result["emotion"]] += 1
         
-        # Calculate overall emotion (most frequent)
-        total_entries = len(emotions)
-        overall_emotion = max(emotion_counts.items(), key=lambda x: x[1])[0] if total_entries > 0 else "neutral"
+        total = len(emotions)
+        overall = max(emotion_counts.items(), key=lambda x: x[1])[0] if total > 0 else "neutral"
         
-        # Calculate distribution percentages
-        emotion_distribution = {
-            emotion: (count / total_entries * 100) if total_entries > 0 else 0.0
-            for emotion, count in emotion_counts.items()
+        distribution = {
+            e: (count / total * 100) if total > 0 else 0.0
+            for e, count in emotion_counts.items()
         }
         
         return {
-            "overall_emotion": overall_emotion,
-            "emotion_distribution": emotion_distribution,
+            "overall_emotion": overall,
+            "emotion_distribution": distribution,
             "emotion_timeline": emotions,
-            "total_analyzed": total_entries
+            "total_analyzed": total
         }
 
 
-# ---------------- Singleton accessor ---------------- #
+# Singleton
 _emotion_service: Optional[EmotionService] = None
 
 
 def get_emotion_service() -> EmotionService:
-    """Get the singleton emotion service instance."""
+    """Get singleton emotion service."""
     global _emotion_service
     if _emotion_service is None:
         _emotion_service = EmotionService()
     return _emotion_service
 
 
-# ---------------- Compatibility function ---------------- #
-async def analyze_emotion(
-    text: str,
-    session_id: Optional[str] = None,
-    timestamp: Optional[str] = None
-) -> Dict[str, Any]:
-    """
-    Legacy compatibility function for emotion analysis.
-    
-    Args:
-        text: Text to analyze
-        session_id: Optional session ID
-        timestamp: Optional timestamp
-        
-    Returns:
-        Dict with emotion analysis including metadata
-    """
+# Compatibility function
+async def analyze_transcript_emotions(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Analyze emotions for transcript entries."""
     service = get_emotion_service()
-    result = await service.analyze_text(text)
+    
+    # Analyze each entry
+    individual_results = []
+    for entry in entries:
+        emotion_result = await service.analyze_text(entry.get("text", ""))
+        individual_results.append({
+            "entry_id": entry.get("id"),
+            "speaker": entry.get("speaker"),
+            "emotion_analysis": {
+                "primary_emotion": emotion_result["emotion"],
+                "confidence": emotion_result["confidence"],
+                "sentiment_polarity": "positive" if emotion_result["emotion"] in ["happy", "excited", "confident"] else "negative" if emotion_result["emotion"] in ["sad", "angry", "frustrated"] else "neutral",
+                "sentiment_score": emotion_result["confidence"] if emotion_result["emotion"] in ["happy", "excited"] else -emotion_result["confidence"] if emotion_result["emotion"] in ["sad", "angry"] else 0.0
+            }
+        })
+    
+    # Session summary
+    session_summary = await service.analyze_session_emotions(entries)
+    
+    # Add additional fields for compatibility
+    emotion_counts = {}
+    sentiment_counts = {"positive": 0, "negative": 0, "neutral": 0}
+    
+    for result in individual_results:
+        emotion = result["emotion_analysis"]["primary_emotion"]
+        sentiment = result["emotion_analysis"]["sentiment_polarity"]
+        
+        emotion_counts[emotion] = emotion_counts.get(emotion, 0) + 1
+        sentiment_counts[sentiment] += 1
+    
+    avg_sentiment = sum(
+        r["emotion_analysis"]["sentiment_score"] 
+        for r in individual_results
+    ) / len(individual_results) if individual_results else 0.0
+    
+    session_summary["emotion_distribution"] = emotion_counts
+    session_summary["sentiment_distribution"] = sentiment_counts
+    session_summary["average_sentiment_score"] = avg_sentiment
+    session_summary["dominant_emotion"] = session_summary.get("overall_emotion", "neutral")
+    session_summary["dominant_sentiment"] = max(sentiment_counts.items(), key=lambda x: x[1])[0] if sentiment_counts else "neutral"
     
     return {
-        "id": f"emo_{uuid.uuid4()}",
-        "session_id": session_id,
-        "timestamp": timestamp or datetime.utcnow().isoformat(),
-        "text": text,
-        "emotion": result["emotion"],
-        "confidence": result["confidence"],
-        "scores": result["scores"]
+        "individual_results": individual_results,
+        "session_summary": session_summary
     }

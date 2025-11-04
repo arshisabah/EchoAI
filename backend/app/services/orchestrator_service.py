@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 import numpy as np
 
-from app.services.transcription_service import get_transcription_service, process_audio_chunk_whisperx
+from app.services.transcription_service import get_transcription_service, process_audio_chunk
 from app.services.emotion_analysis import get_emotion_service
 from app.services.summary_service import get_summary_service
 from app.services.speaker_identification_service import get_speaker_service
@@ -56,6 +56,23 @@ class OrchestratorService:
         
         logger.info("OrchestratorService initialized with all AI services")
 
+    async def start_session(self, session_id: str):
+        """
+        Start or restore a session for transcription/analysis.
+        Creates a new session if it doesn't exist.
+        """
+        if session_id not in self.active_sessions:
+            self.active_sessions[session_id] = SessionData(session_id)
+            logger.info(f" Created new session: {session_id}")
+        else:
+            logger.info(f"Session {session_id} already exists.")
+        
+        return {
+            "session_id": session_id,
+            "status": "active",
+            "created_at": self.active_sessions[session_id].created_at.isoformat()
+        }
+
     async def process_audio_chunk(
         self,
         audio_bytes: bytes,
@@ -89,7 +106,7 @@ class OrchestratorService:
                 return None
 
             # Process through WhisperX (includes transcription and basic speaker diarization)
-            whisperx_results = await process_audio_chunk_whisperx(audio_array, session_id)
+            whisperx_results = await process_audio_chunk(audio_array, session_id)
             
             if not whisperx_results:
                 logger.debug(f"No transcription results for session {session_id}")

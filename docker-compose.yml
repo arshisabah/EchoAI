@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  # EchoAI Backend API
+  backend:
+    build: .
+    container_name: echoai-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=True
+      - LOG_LEVEL=INFO
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN}
+      - SESSION_STORE_TYPE=postgresql
+      - DATABASE_URL=postgresql://echoai:echoai123@postgres:5432/echoai
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./models_cache:/app/models_cache
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+    networks:
+      - echoai-network
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: echoai-postgres
+    environment:
+      - POSTGRES_USER=echoai
+      - POSTGRES_PASSWORD=echoai123
+      - POSTGRES_DB=echoai
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - echoai-network
+
+  # Redis for caching
+  redis:
+    image: redis:7-alpine
+    container_name: echoai-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - echoai-network
+
+  # Optional: PgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: echoai-pgadmin
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@echoai.local
+      - PGADMIN_DEFAULT_PASSWORD=admin123
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    networks:
+      - echoai-network
+    profiles:
+      - dev
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  echoai-network:
+    driver: bridge
