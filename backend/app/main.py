@@ -92,9 +92,10 @@ async def add_process_time_header(request: Request, call_next):
 
 # Include routers
 try:
-    from app.routers import transcript, summary, analytics
+    from app.routers import transcript, summary, analytics, meeting
     
-    app.include_router(transcript.router)
+    app.include_router(meeting.router)  # Multi-user meetings (primary)
+    app.include_router(transcript.router)  # Legacy single-user support
     app.include_router(summary.router)
     app.include_router(analytics.router)
     
