@@ -74,3 +74,4 @@ __pycache__/
 *.pyc
 backend/.env
 backend/.env.example.env
+.env
