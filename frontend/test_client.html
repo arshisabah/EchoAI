@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>EchoAI Multi-User Meeting Test Client</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 { font-size: 2.5rem; margin-bottom: 10px; }
+        .header p { opacity: 0.9; font-size: 1.1rem; }
+        
+        .content {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 20px;
+            padding: 20px;
+        }
+        
+        .panel {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .panel h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.3rem;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        
+        .controls { display: flex; flex-direction: column; gap: 15px; }
+        
+        input, button {
+            padding: 12px 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .status {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-weight: 500;
+        }
+        
+        .status.connected { background: #d4edda; color: #155724; }
+        .status.disconnected { background: #f8d7da; color: #721c24; }
+        
+        .transcript-area {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            height: 400px;
+            overflow-y: auto;
+        }
+        
+        .transcript-entry {
+            padding: 12px;
+            margin-bottom: 10px;
+            border-left: 4px solid #667eea;
+            background: #f8f9fa;
+            border-radius: 5px;
+        }
+        
+        .transcript-entry strong { color: #667eea; }
+        
+        .emotion-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 15px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+        
+        .emotion-happy { background: #d4edda; color: #155724; }
+        .emotion-sad { background: #d1ecf1; color: #0c5460; }
+        .emotion-angry { background: #f8d7da; color: #721c24; }
+        .emotion-neutral { background: #e2e3e5; color: #383d41; }
+        
+        .guidance-box {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 8px;
+            font-size: 13px;
+        }
+        
+        .participants {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .participant {
+            background: #667eea;
+            color: white;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 13px;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .stat-card {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #667eea;
+        }
+        
+        .stat-label {
+            color: #666;
+            font-size: 0.9rem;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎙️ EchoAI Multi-User Meeting</h1>
+            <p>Real-time transcription with emotion analysis & guidance</p>
+        </div>
+        
+        <div class="content">
+            <div class="left-panel">
+                <div class="panel">
+                    <h3>Meeting Setup</h3>
+                    <div class="controls">
+                        <input type="text" id="roomId" placeholder="Room ID" value="demo-room-001">
+                        <input type="text" id="roomName" placeholder="Room Name" value="Weekly Team Meeting">
+                        <input type="text" id="userId" placeholder="Your User ID" value="">
+                        <input type="text" id="username" placeholder="Your Name" value="">
+                        <button onclick="createRoom()">Create Room</button>
+                        <button onclick="joinRoom()">Join Room</button>
+                        <button onclick="startRecording()" id="recordBtn" disabled>Start Recording</button>
+                        <button onclick="stopRecording()" id="stopBtn" disabled>Stop Recording</button>
+                        <button onclick="leaveRoom()">Leave Room</button>
+                    </div>
+                    
+                    <div id="status" class="status disconnected">Disconnected</div>
+                    
+                    <h3 style="margin-top: 20px;">Participants</h3>
+                    <div id="participants" class="participants"></div>
+                    
+                    <div class="stats">
+                        <div class="stat-card">
+                            <div class="stat-value" id="entryCount">0</div>
+                            <div class="stat-label">Transcripts</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value" id="wordCount">0</div>
+                            <div class="stat-label">Words</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value" id="participantCount">0</div>
+                            <div class="stat-label">Participants</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="right-panel">
+                <div class="panel">
+                    <h3>Live Transcript</h3>
+                    <div id="transcripts" class="transcript-area"></div>
+                    
+                    <button onclick="getSummary()" style="margin-top: 15px; width: 100%;">
+                        📝 Get Meeting Summary
+                    </button>
+                    <button onclick="extractTasks()" style="margin-top: 10px; width: 100%;">
+                        ✅ Extract Tasks
+                    </button>
+                    <button onclick="exportData()" style="margin-top: 10px; width: 100%;">
+                        💾 Export All Data
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let ws = null;
+        let mediaRecorder = null;
+        let audioContext = null;
+        let entryCount = 0;
+        let wordCount = 0;
+        
+        // Generate random user ID if not set
+        document.getElementById('userId').value = 'user_' + Math.random().toString(36).substr(2, 9);
+        document.getElementById('username').value = 'User ' + Math.floor(Math.random() * 1000);
+        
+        async function createRoom() {
+            const roomId = document.getElementById('roomId').value;
+            const roomName = document.getElementById('roomName').value;
+            const userId = document.getElementById('userId').value;
+            
+            try {
+                const response = await fetch(`http://localhost:8000/meeting/rooms/create?room_id=${roomId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        room_name: roomName,
+                        created_by: userId,
+                        max_participants: 50
+                    })
+                });
+                
+                const data = await response.json();
+                console.log('Room created:', data);
+                alert('Room created successfully! Now click "Join Room"');
+            } catch (error) {
+                console.error('Error creating room:', error);
+                alert('Error creating room: ' + error.message);
+            }
+        }
+        
+        async function joinRoom() {
+            const roomId = document.getElementById('roomId').value;
+            const userId = document.getElementById('userId').value;
+            const username = document.getElementById('username').value;
+            
+            const wsUrl = `ws://localhost:8000/meeting/rooms/${roomId}/ws?user_id=${userId}&username=${encodeURIComponent(username)}`;
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                document.getElementById('status').innerHTML = '✅ Connected to room';
+                document.getElementById('status').className = 'status connected';
+                document.getElementById('recordBtn').disabled = false;
+                console.log('Connected to room');
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                console.log('Received:', data);
+                
+                if (data.type === 'welcome') {
+                    console.log('Welcome:', data.message);
+                    updateParticipants(data.room_info.participants);
+                }
+                else if (data.type === 'live_transcript') {
+                    addTranscript(data);
+                }
+                else if (data.type === 'participant_joined') {
+                    console.log('User joined:', data.username);
+                    updateParticipantCount(data.participant_count);
+                }
+                else if (data.type === 'participant_left') {
+                    console.log('User left:', data.username);
+                    updateParticipantCount(data.participant_count);
+                }
+                else if (data.type === 'chat_message') {
+                    console.log('Chat:', data.from_username, data.message);
+                }
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                document.getElementById('status').innerHTML = '❌ Connection error';
+                document.getElementById('status').className = 'status disconnected';
+            };
+            
+            ws.onclose = () => {
+                document.getElementById('status').innerHTML = '❌ Disconnected';
+                document.getElementById('status').className = 'status disconnected';
+                document.getElementById('recordBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = true;
+            };
+        }
+        
+        async function startRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                audioContext = new AudioContext({ sampleRate: 16000 });
+                const source = audioContext.createMediaStreamSource(stream);
+                
+                // Create recorder
+                mediaRecorder = new MediaRecorder(stream);
+                
+                mediaRecorder.ondataavailable = async (event) => {
+                    if (ws && ws.readyState === WebSocket.OPEN && event.data.size > 0) {
+                        // Convert to base64
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            const base64 = reader.result.split(',')[1];
+                            
+                            ws.send(JSON.stringify({
+                                type: 'audio_chunk',
+                                audio_data: base64,
+                                sample_rate: 16000
+                            }));
+                        };
+                        reader.readAsDataURL(event.data);
+                    }
+                };
+                
+                mediaRecorder.start(1000); // Send chunks every second
+                
+                document.getElementById('recordBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+                
+                console.log('Recording started');
+            } catch (error) {
+                console.error('Error starting recording:', error);
+                alert('Error accessing microphone: ' + error.message);
+            }
+        }
+        
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+            }
+            
+            if (audioContext) {
+                audioContext.close();
+            }
+            
+            document.getElementById('recordBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            
+            console.log('Recording stopped');
+        }
+        
+        function leaveRoom() {
+            stopRecording();
+            if (ws) {
+                ws.close();
+            }
+        }
+        
+        function addTranscript(data) {
+            const div = document.createElement('div');
+            div.className = 'transcript-entry';
+            
+            const emotionClass = `emotion-${data.emotion || 'neutral'}`;
+            
+            let html = `
+                <strong>${data.username}</strong>
+                <span class="emotion-badge ${emotionClass}">${data.emotion || 'neutral'}</span>
+                <br>
+                ${data.text}
+            `;
+            
+            if (data.emotion_guidance) {
+                html += `
+                    <div class="guidance-box">
+                        💡 <strong>Guidance:</strong> ${data.emotion_guidance.primary_guidance}
+                    </div>
+                `;
+            }
+            
+            div.innerHTML = html;
+            
+            const container = document.getElementById('transcripts');
+            container.insertBefore(div, container.firstChild);
+            
+            // Update stats
+            entryCount++;
+            wordCount += data.text.split(' ').length;
+            document.getElementById('entryCount').textContent = entryCount;
+            document.getElementById('wordCount').textContent = wordCount;
+        }
+        
+        function updateParticipants(participants) {
+            const container = document.getElementById('participants');
+            container.innerHTML = '';
+            
+            participants.forEach(p => {
+                const div = document.createElement('div');
+                div.className = 'participant';
+                div.textContent = p.username;
+                container.appendChild(div);
+            });
+            
+            updateParticipantCount(participants.length);
+        }
+        
+        function updateParticipantCount(count) {
+            document.getElementById('participantCount').textContent = count;
+        }
+        
+        async function getSummary() {
+            const roomId = document.getElementById('roomId').value;
+            
+            try {
+                const response = await fetch(`http://localhost:8000/meeting/rooms/${roomId}/summary`);
+                const data = await response.json();
+                
+                console.log('Summary:', data);
+                
+                const summaryWindow = window.open('', 'Summary', 'width=800,height=600');
+                summaryWindow.document.write(`
+                    <html>
+                    <head><title>Meeting Summary</title></head>
+                    <body style="font-family: Arial; padding: 20px;">
+                        <h1>Meeting Summary</h1>
+                        <h2>Summary</h2>
+                        <p>${data.summary}</p>
+                        
+                        <h2>Tasks (${data.tasks.length})</h2>
+                        <ul>
+                            ${data.tasks.map(t => `<li><strong>${t.title}</strong> - Assigned to: ${t.assigned_to}</li>`).join('')}
+                        </ul>
+                        
+                        <h2>Analytics</h2>
+                        <p>Total Words: ${data.analytics.total_words}</p>
+                        <p>Participants: ${data.analytics.speakers.join(', ')}</p>
+                    </body>
+                    </html>
+                `);
+            } catch (error) {
+                console.error('Error getting summary:', error);
+                alert('Error: ' + error.message);
+            }
+        }
+        
+        async function extractTasks() {
+            const roomId = document.getElementById('roomId').value;
+            
+            try {
+                const response = await fetch(`http://localhost:8000/meeting/rooms/${roomId}/tasks/extract`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                console.log('Tasks extracted:', data);
+                alert(`Extracted ${data.task_count} tasks!`);
+            } catch (error) {
+                console.error('Error extracting tasks:', error);
+                alert('Error: ' + error.message);
+            }
+        }
+        
+        async function exportData() {
+            const roomId = document.getElementById('roomId').value;
+            
+            try {
+                const response = await fetch(`http://localhost:8000/meeting/rooms/${roomId}/export`);
+                const data = await response.json();
+                
+                // Download as JSON
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `meeting_${roomId}_${Date.now()}.json`;
+                a.click();
+                
+                console.log('Data exported');
+            } catch (error) {
+                console.error('Error exporting data:', error);
+                alert('Error: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html>

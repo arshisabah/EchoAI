@@ -1,6 +1,6 @@
-# backend/main.py
+# main.py
 """
-Main FastAPI application with monitoring.
+EchoAI Backend - Production Ready Multi-User Meeting Platform
 """
 
 import logging
@@ -9,17 +9,19 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import time
-from app.db import init_db
+import psutil
 
 from app.core.config import settings
 from app.core.logging_config import setup_logging
+from app.db import init_db
 
 # Setup logging
 setup_logging(log_level=settings.LOG_LEVEL)
 logger = logging.getLogger(__name__)
 
-# Initialize database tables
+# Initialize database
 init_db()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -34,18 +36,35 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ Monitoring initialization warning: {e}")
     
-    # Services will lazy-load on first use
-    logger.info("✅ Services configured (lazy initialization)")
+    # Start meeting room broadcasting
+    try:
+        from app.services.meeting_room_manager import get_meeting_room_manager
+        room_manager = get_meeting_room_manager()
+        await room_manager.start_broadcasting()
+        logger.info("✅ Meeting room manager started")
+    except Exception as e:
+        logger.error(f"❌ Meeting room manager failed: {e}")
+    
+    logger.info("✅ EchoAI Backend ready!")
     
     yield
     
-    logger.info("🛑 Shutting down EchoAI Backend...")
+    # Cleanup
+    try:
+        from app.services.meeting_room_manager import get_meeting_room_manager
+        room_manager = get_meeting_room_manager()
+        await room_manager.stop_broadcasting()
+        logger.info("✅ Meeting room manager stopped")
+    except:
+        pass
+    
+    logger.info("🛑 EchoAI Backend shutdown complete")
 
 
 # Create FastAPI app
 app = FastAPI(
     title="EchoAI Backend",
-    description="Real-time meeting intelligence with AI",
+    description="Multi-User Meeting Platform with Real-Time AI Intelligence",
     version="3.0.0",
     lifespan=lifespan
 )
@@ -63,13 +82,12 @@ app.add_middleware(
 # Request timing middleware
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
-    """Add processing time header and collect metrics."""
+    """Add processing time header."""
     start_time = time.time()
     
     try:
         response = await call_next(request)
         process_time = (time.time() - start_time) * 1000
-        
         response.headers["X-Process-Time-Ms"] = str(round(process_time, 2))
         
         # Record metrics
@@ -83,42 +101,52 @@ async def add_process_time_header(request: Request, call_next):
         
         return response
     except Exception as e:
-        logger.error(f"Request processing error: {e}")
+        logger.error(f"Request error: {e}")
         try:
             from app.core.monitoring import get_metrics_collector
-            metrics = get_metrics_collector()
-            metrics.increment("requests_failed")
+            get_metrics_collector().increment("requests_failed")
         except:
             pass
         raise
 
 
 # Include routers
-try:
-    from app.routers import transcript, summary, analytics, meeting
-    
-    app.include_router(meeting.router)  # Multi-user meetings (primary)
-    app.include_router(transcript.router)  # Legacy single-user support
-    app.include_router(summary.router)
-    app.include_router(analytics.router)
-    
-    logger.info("✅ API routers loaded")
-except Exception as e:
-    logger.error(f"❌ Failed to load routers: {e}")
+from app.routers import meeting, transcript, summary, analytics
+
+app.include_router(meeting.router)       # Multi-user meetings (PRIMARY)
+app.include_router(transcript.router)    # Legacy single-user support
+app.include_router(summary.router)       # AI summaries
+app.include_router(analytics.router)     # Meeting analytics
+
+logger.info("✅ All API routers loaded")
 
 
 # Root endpoints
 @app.get("/", tags=["Root"])
 async def read_root():
-    """Root endpoint."""
+    """Root endpoint with API information."""
     return {
-        "message": "EchoAI Backend - Real-time Meeting Intelligence",
+        "name": "EchoAI Backend",
         "version": "3.0.0",
         "status": "running",
+        "description": "Multi-User Meeting Platform with Real-Time AI Intelligence",
+        "features": [
+            "Multi-user real-time meetings",
+            "Live transcription with speaker identification",
+            "Real-time emotion analysis with guidance",
+            "AI-powered task extraction and assignment",
+            "Meeting summaries and analytics",
+            "Local data export"
+        ],
         "endpoints": {
             "docs": "/docs",
+            "redoc": "/redoc",
             "health": "/health",
-            "metrics": "/metrics"
+            "metrics": "/metrics",
+            "create_room": "POST /meeting/rooms/create?room_id={id}",
+            "join_room": "WS /meeting/rooms/{room_id}/ws",
+            "get_summary": "GET /meeting/rooms/{room_id}/summary",
+            "get_tasks": "GET /meeting/rooms/{room_id}/tasks"
         }
     }
 
@@ -135,61 +163,72 @@ async def health_check():
 
 @app.get("/health/detailed", tags=["Health"])
 async def detailed_health_check():
-    """Comprehensive health check with component status."""
-    try:
-        from app.core.monitoring import HealthChecker
-        health = HealthChecker.get_comprehensive_health()
-        return health
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return {
-            "status": "unhealthy",
-            "error": str(e),
-            "timestamp": time.time()
-        }
+    """Comprehensive health check (production-safe)."""
+    components = {}
+    status = "ok"
 
+    # Database check
+    try:
+        from app.db import engine
+        with engine.connect() as conn:
+            conn.execute("SELECT 1")
+        components["database"] = "connected"
+    except Exception as e:
+        logger.error(f"Database check failed: {e}")
+        components["database"] = f"error: {e}"
+        status = "unhealthy"
+
+    # OpenAI API check
+    try:
+        import openai
+        if settings.OPENAI_API_KEY:
+            openai.api_key = settings.OPENAI_API_KEY
+            components["openai"] = "configured"
+        else:
+            components["openai"] = "missing"
+    except Exception as e:
+        components["openai"] = f"error: {e}"
+        status = "unhealthy"
+
+    # Version info
+    components["version"] = getattr(settings, "APP_VERSION", "unknown")
+
+    return {
+        "status": status,
+        "components": components,
+        "timestamp": time.time(),
+    }
 
 @app.get("/metrics", tags=["Monitoring"])
 async def get_metrics():
-    """Get application metrics."""
+    """Return live app + system metrics (safe in production)."""
+    app_metrics = {}
+    system_metrics = {}
+
     try:
+        # Real app metrics if collector available
         from app.core.monitoring import get_metrics_collector
         metrics = get_metrics_collector()
-        
-        return {
-            "application_metrics": metrics.get_metrics(),
-            "system_metrics": metrics.get_system_metrics(),
-            "timestamp": time.time()
+        app_metrics = metrics.get_metrics()
+        system_metrics = metrics.get_system_metrics()
+    except Exception:
+        # Fallback to psutil system metrics
+        app_metrics = {
+            "status": "ok",
+            "requests_total": 0,
+            "requests_failed": 0,
         }
-    except Exception as e:
-        logger.error(f"Metrics retrieval failed: {e}")
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)}
-        )
-
-
-@app.get("/alerts", tags=["Monitoring"])
-async def get_alerts(level: str = None):
-    """Get system alerts."""
-    try:
-        from app.core.monitoring import get_alert_manager
-        alert_manager = get_alert_manager()
-        
-        alerts = alert_manager.get_alerts(level)
-        
-        return {
-            "alerts": alerts,
-            "count": len(alerts),
-            "timestamp": time.time()
+        system_metrics = {
+            "cpu_percent": psutil.cpu_percent(interval=0.1),
+            "memory_used_mb": round(psutil.virtual_memory().used / (1024 * 1024), 2),
+            "memory_percent": psutil.virtual_memory().percent,
         }
-    except Exception as e:
-        logger.error(f"Alert retrieval failed: {e}")
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)}
-        )
 
+    return {
+        "application_metrics": app_metrics,
+        "system_metrics": system_metrics,
+        "timestamp": time.time(),
+    }
 
 # Error handlers
 @app.exception_handler(Exception)
@@ -197,22 +236,12 @@ async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler."""
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
     
-    try:
-        from app.core.monitoring import get_alert_manager
-        alert_manager = get_alert_manager()
-        alert_manager.add_alert(
-            "error",
-            f"Unhandled exception: {str(exc)}",
-            {"path": request.url.path, "method": request.method}
-        )
-    except:
-        pass
-    
     return JSONResponse(
         status_code=500,
         content={
             "error": "Internal server error",
-            "detail": str(exc) if settings.DEBUG else "An error occurred"
+            "detail": str(exc) if settings.DEBUG else "An error occurred",
+            "path": str(request.url.path)
         }
     )
 

@@ -7,6 +7,7 @@ to detected emotions in conversations.
 import logging
 from typing import Dict, Any, List
 from datetime import datetime
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
