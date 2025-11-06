@@ -44,7 +44,7 @@ async def websocket_transcript_endpoint(websocket: WebSocket, session_id: str):
     
     # Create session if doesn't exist
     try:
-        create_session(session_id, {"connection_type": "websocket"})
+        await create_session(session_id, {"connection_type": "websocket"})
     except Exception as e:
         logger.warning(f"Session creation warning: {e}")
     

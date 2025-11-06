@@ -7,9 +7,11 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 import time
 import psutil
+import os
+
 
 from app.core.config import settings
 from app.core.logging_config import setup_logging
@@ -21,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 # Initialize database
 init_db()
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -258,3 +259,11 @@ if __name__ == "__main__":
         reload=settings.DEBUG,
         log_level=settings.LOG_LEVEL.lower()
     )
+
+
+# 🔹 Add this new route
+@app.get("/test")
+def serve_test():
+    # Get the path to test.html (assuming it's in backend/)
+    file_path = os.path.join(os.path.dirname(__file__), "../test.html")
+    return FileResponse(file_path)
