@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 import numpy as np
 
-from app.services.transcription_service import get_transcription_service, process_audio_chunk
+from app.services.transcription_service import get_transcription_service
 from app.services.emotion_analysis import get_emotion_service
 from app.services.summary_service import get_summary_service
 from app.services.speaker_identification_service import get_speaker_service
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 class SessionData:
     """Container for session-level data and statistics."""
-    
+
     def __init__(self, session_id: str):
         self.session_id = session_id
         self.created_at = datetime.utcnow()
@@ -43,11 +43,14 @@ class OrchestratorService:
         self.emotion_service = get_emotion_service()
         self.summary_service = get_summary_service()
         self.speaker_service = get_speaker_service()
-        
+
         # Session management
         self.active_sessions: Dict[str, SessionData] = {}
-        
-        logger.info("OrchestratorService initialized")
+
+        # Buffer for audio chunks
+        self.audio_buffers: Dict[str, List[np.ndarray]] = {}
+
+        logger.info("✅ OrchestratorService initialized")
 
     async def start_session(self, session_id: str):
         """Start or restore a session."""
@@ -56,7 +59,7 @@ class OrchestratorService:
             logger.info(f"✅ Created new session: {session_id}")
         else:
             logger.info(f"Session {session_id} already exists.")
-        
+
         return {
             "session_id": session_id,
             "status": "active",
@@ -70,7 +73,7 @@ class OrchestratorService:
         participant_id: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
         """
-        Process a single audio chunk through the complete AI pipeline.
+        Process a single or buffered audio chunk through the complete AI pipeline.
         Returns processed results with transcription and emotion analysis.
         """
         try:
@@ -81,80 +84,98 @@ class OrchestratorService:
             session = self.active_sessions[session_id]
             session.last_activity = datetime.utcnow()
 
-            # Convert audio bytes to numpy array
+            # Convert bytes → numpy
             audio_array, sample_rate = bytes_to_numpy(audio_bytes, sample_rate=16000)
-            
             if len(audio_array) == 0:
                 logger.warning(f"Empty audio chunk for session {session_id}")
                 return None
 
-            # 1. TRANSCRIPTION - Get speech-to-text
-            transcription_results = await process_audio_chunk(audio_array, session_id)
-            
+            # Initialize buffer for session
+            if session_id not in self.audio_buffers:
+                self.audio_buffers[session_id] = []
+
+            # Append new chunk
+            self.audio_buffers[session_id].append(audio_array)
+
+            # Combine buffered chunks
+            try:
+                buffered_audio = np.concatenate(self.audio_buffers[session_id])
+            except ValueError:
+                logger.exception(f"Failed to concatenate audio buffers for {session_id}, resetting buffer")
+                self.audio_buffers[session_id] = []
+                return None
+
+            duration_sec = len(buffered_audio) / sample_rate
+
+            # Only process when ~3s of audio is buffered
+            if duration_sec < 3.0:
+                logger.debug(f"Buffered {duration_sec:.2f}s for {session_id} — waiting for more audio")
+                return None
+
+            # Clear buffer after processing
+            self.audio_buffers[session_id] = []
+            audio_array = buffered_audio
+
+            # ----- TRANSCRIPTION -----
+            transcription_results = await self.transcription_service.process_audio_chunk(
+                audio_array, session_id
+            )
+
             if not transcription_results:
                 logger.debug(f"No transcription results for session {session_id}")
                 return None
 
-            # Process each transcription result
             processed_entries = []
-            
             for trans_entry in transcription_results:
                 text = trans_entry.get("text", "").strip()
                 if not text:
                     continue
 
-                # 2. SPEAKER IDENTIFICATION
+                # SPEAKER IDENTIFICATION
                 speaker = await self.speaker_service.identify_speaker(
                     audio_array, session_id, sample_rate
                 )
-                
-                # 3. EMOTION ANALYSIS - Analyze emotion from text
+
+                # EMOTION ANALYSIS
                 emotion_result = await self.emotion_service.analyze_text(text)
 
-                # 4. Update speaker statistics
+                # Update stats
                 await self.speaker_service.update_speaker_statistics(
                     speaker,
                     speaking_duration=len(audio_array) / sample_rate,
                     word_count=len(text.split())
                 )
 
-                # 5. Build comprehensive entry
+                # Build entry
                 entry = {
                     "id": str(uuid.uuid4()),
                     "session_id": session_id,
                     "participant_id": participant_id,
                     "timestamp": datetime.utcnow().isoformat(),
-                    
-                    # Transcription data
                     "text": text,
                     "speaker": speaker,
                     "confidence": trans_entry.get("confidence", 0.0),
                     "word_count": len(text.split()),
                     "processing_time_ms": trans_entry.get("processing_time_ms", 0.0),
                     "words": trans_entry.get("words", []),
-                    
-                    # Emotion analysis results
                     "emotion": emotion_result.get("emotion", "neutral"),
                     "emotion_confidence": emotion_result.get("confidence", 0.0),
                     "emotion_scores": emotion_result.get("scores", {}),
-                    
-                    # Audio characteristics
                     "audio_duration_ms": len(audio_array) / sample_rate * 1000,
                     "sample_rate": sample_rate
                 }
 
                 processed_entries.append(entry)
-                
-                # Add to session transcript
+
+                # Save entry to session
                 session.transcript_entries.append(entry)
                 if speaker not in session.speakers:
                     session.speakers.append(speaker)
 
-            # Return the result
+            # Return structured result
             if len(processed_entries) == 1:
                 return processed_entries[0]
             elif len(processed_entries) > 1:
-                # Multiple speakers detected - return combined result
                 return {
                     "id": str(uuid.uuid4()),
                     "session_id": session_id,
@@ -194,21 +215,19 @@ class OrchestratorService:
                     "speakers": []
                 }
 
-            # Generate summary
             summary_result = await self.summary_service.generate_structured_summary(
                 recent_texts, session_id, mode="realtime"
             )
 
-            # Add context
             speakers_in_summary = list(set(entry["speaker"] for entry in recent_entries))
-            
+
             return {
                 **summary_result,
                 "speakers": speakers_in_summary,
                 "entry_count": len(recent_entries),
                 "time_range": {
-                    "start": recent_entries[0]["timestamp"] if recent_entries else None,
-                    "end": recent_entries[-1]["timestamp"] if recent_entries else None
+                    "start": recent_entries[0]["timestamp"],
+                    "end": recent_entries[-1]["timestamp"]
                 }
             }
 
@@ -228,7 +247,6 @@ class OrchestratorService:
             if not session:
                 return {"error": f"Session {session_id} not found"}
 
-            # Generate different types of analysis
             tasks = [
                 self.summary_service.generate_meeting_insights(session.transcript_entries),
                 self.emotion_service.analyze_session_emotions(session.transcript_entries),
@@ -237,31 +255,26 @@ class OrchestratorService:
 
             meeting_insights, emotion_insights, speaker_insights = await asyncio.gather(*tasks)
 
-            # Combine all insights
             comprehensive_insights = {
                 "session_id": session_id,
                 "generated_at": datetime.utcnow().isoformat(),
                 "session_duration_minutes": (
                     datetime.utcnow() - session.created_at
                 ).total_seconds() / 60,
-                
-                # Meeting summary and insights
+
                 "meeting_summary": meeting_insights.get("summary", ""),
                 "action_items": meeting_insights.get("action_items", []),
                 "key_topics": meeting_insights.get("key_topics", ""),
                 "total_words": meeting_insights.get("total_words", 0),
-                
-                # Emotion analysis
+
                 "overall_emotion": emotion_insights.get("overall_emotion", "neutral"),
                 "emotion_distribution": emotion_insights.get("emotion_distribution", {}),
                 "emotion_timeline": emotion_insights.get("emotion_timeline", []),
-                
-                # Speaker analytics
+
                 "speaker_statistics": speaker_insights,
                 "total_participants": len(session.speakers),
                 "participant_list": session.speakers,
-                
-                # Session metadata
+
                 "total_transcript_entries": len(session.transcript_entries),
                 "session_start_time": session.created_at.isoformat(),
                 "last_activity": session.last_activity.isoformat()
@@ -277,11 +290,7 @@ class OrchestratorService:
                 "generated_at": datetime.utcnow().isoformat()
             }
 
-    async def get_session_transcript(
-        self, 
-        session_id: str, 
-        include_metadata: bool = True
-    ) -> Dict[str, Any]:
+    async def get_session_transcript(self, session_id: str, include_metadata: bool = True) -> Dict[str, Any]:
         """Get the complete transcript for a session."""
         try:
             session = self.active_sessions.get(session_id)
@@ -298,10 +307,9 @@ class OrchestratorService:
             }
 
             if include_metadata:
-                # Add session statistics
                 total_words = sum(entry.get("word_count", 0) for entry in session.transcript_entries)
                 speaker_word_counts = {}
-                
+
                 for entry in session.transcript_entries:
                     speaker = entry.get("speaker", "Unknown")
                     words = entry.get("word_count", 0)
@@ -313,7 +321,8 @@ class OrchestratorService:
                     "session_duration_minutes": (
                         session.last_activity - session.created_at
                     ).total_seconds() / 60,
-                    "average_words_per_entry": total_words / len(session.transcript_entries) if session.transcript_entries else 0
+                    "average_words_per_entry": total_words / len(session.transcript_entries)
+                    if session.transcript_entries else 0
                 }
 
             return transcript_data
@@ -329,18 +338,15 @@ class OrchestratorService:
             if not session:
                 return {"error": f"Session {session_id} not found"}
 
-            # Generate final comprehensive summary
             final_insights = await self.generate_session_insights(session_id)
-            
-            # Generate final summary
+
             all_texts = [entry["text"] for entry in session.transcript_entries if entry.get("text")]
             final_summary = await self.summary_service.generate_structured_summary(
                 all_texts, session_id, mode="final"
             )
 
-            # Mark session as closed
             session.is_active = False
-            
+
             session_data = {
                 "session_id": session_id,
                 "status": "closed",
@@ -353,7 +359,7 @@ class OrchestratorService:
                 ).total_seconds() / 60
             }
 
-            logger.info(f"Session {session_id} closed successfully")
+            logger.info(f"✅ Session {session_id} closed successfully")
             return session_data
 
         except Exception as e:
@@ -363,7 +369,6 @@ class OrchestratorService:
     def list_active_sessions(self) -> List[Dict[str, Any]]:
         """Get list of all active sessions."""
         active_sessions = []
-        
         for session_id, session in self.active_sessions.items():
             if session.is_active:
                 active_sessions.append({
@@ -376,7 +381,6 @@ class OrchestratorService:
                         datetime.utcnow() - session.created_at
                     ).total_seconds() / 60
                 })
-        
         return active_sessions
 
 
