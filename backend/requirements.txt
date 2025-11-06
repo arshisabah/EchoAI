@@ -6,8 +6,9 @@ uvicorn[standard]==0.27.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
 python-multipart==0.0.6
+websockets==12.0
 
-# API Clients
+# API Clients (REQUIRED for transcription and emotion analysis)
 openai==1.12.0
 anthropic==0.18.0
 httpx==0.26.0
@@ -17,30 +18,32 @@ aiohttp==3.9.1
 torch==2.4.0
 torchaudio==2.4.0
 transformers==4.37.0
-# WhisperX for transcription
-git+https://github.com/m-bain/whisperX.git
 
-# Audio Processing
+# Transcription (choose one or all)
+openai-whisper==20231117  # Local Whisper (fallback)
+# git+https://github.com/m-bain/whisperX.git  # WhisperX (optional, best quality)
+
+# Audio Processing (REQUIRED)
 librosa==0.10.1
 soundfile==0.12.1
 pydub==0.25.1
-
-# Speaker Diarization (Optional - requires HF token)
-# pyannote.audio==3.1.1
+numpy==1.24.3
 
 # Database
 asyncpg==0.29.0  # PostgreSQL
 motor==3.3.2     # MongoDB
-redis==5.0.1     # Redis for caching
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
 
 # Utilities
 python-dotenv==1.0.0
 aiofiles==23.2.1
-huggingface-hub==0.20.0
+python-jose[cryptography]==3.3.0
 
-# Development
+# Monitoring
+psutil==5.9.8
+
+# Development & Testing
 pytest==7.4.0
 pytest-asyncio==0.21.0
 black==23.12.0
-
-psycopg2-binary==2.9.9

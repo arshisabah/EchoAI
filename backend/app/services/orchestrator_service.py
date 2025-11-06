@@ -1,13 +1,6 @@
-# backend/services/orchestrator_service.py
+# app/services/orchestrator_service.py
 """
-Orchestrator Service for EchoAI.
-
-Responsibilities:
-- Process audio chunks in real-time
-- Coordinate between transcription, speaker identification, emotion analysis, and summarization
-- Manage multiple concurrent participants in a session
-- Return structured data for frontend consumption
-- Handle session-level analytics and insights
+Fixed Orchestrator Service for real-time transcription and emotion analysis.
 """
 
 import asyncio
@@ -24,7 +17,6 @@ from app.services.speaker_identification_service import get_speaker_service
 from app.services.audio_utils import bytes_to_numpy
 
 logger = logging.getLogger(__name__)
-logging.getLogger("asyncio").setLevel(logging.WARNING)
 
 
 class SessionData:
@@ -42,7 +34,8 @@ class SessionData:
 
 class OrchestratorService:
     """
-    Main orchestrator service that coordinates all AI services for real-time processing.
+    Main orchestrator service for real-time AI processing.
+    Coordinates transcription, emotion analysis, and speaker identification.
     """
 
     def __init__(self):
@@ -54,16 +47,13 @@ class OrchestratorService:
         # Session management
         self.active_sessions: Dict[str, SessionData] = {}
         
-        logger.info("OrchestratorService initialized with all AI services")
+        logger.info("OrchestratorService initialized")
 
     async def start_session(self, session_id: str):
-        """
-        Start or restore a session for transcription/analysis.
-        Creates a new session if it doesn't exist.
-        """
+        """Start or restore a session."""
         if session_id not in self.active_sessions:
             self.active_sessions[session_id] = SessionData(session_id)
-            logger.info(f" Created new session: {session_id}")
+            logger.info(f"✅ Created new session: {session_id}")
         else:
             logger.info(f"Session {session_id} already exists.")
         
@@ -81,14 +71,7 @@ class OrchestratorService:
     ) -> Optional[Dict[str, Any]]:
         """
         Process a single audio chunk through the complete AI pipeline.
-
-        Args:
-            audio_bytes (bytes): Raw audio data
-            session_id (str): Session identifier
-            participant_id (str): Optional participant identifier
-
-        Returns:
-            Dict with processed results or None if processing failed
+        Returns processed results with transcription and emotion analysis.
         """
         try:
             # Ensure session exists
@@ -102,53 +85,53 @@ class OrchestratorService:
             audio_array, sample_rate = bytes_to_numpy(audio_bytes, sample_rate=16000)
             
             if len(audio_array) == 0:
-                logger.warning(f"Empty audio chunk received for session {session_id}")
+                logger.warning(f"Empty audio chunk for session {session_id}")
                 return None
 
-            # Process through WhisperX (includes transcription and basic speaker diarization)
-            whisperx_results = await process_audio_chunk(audio_array, session_id)
+            # 1. TRANSCRIPTION - Get speech-to-text
+            transcription_results = await process_audio_chunk(audio_array, session_id)
             
-            if not whisperx_results:
+            if not transcription_results:
                 logger.debug(f"No transcription results for session {session_id}")
                 return None
 
-            # Process each speaker segment from WhisperX
+            # Process each transcription result
             processed_entries = []
             
-            for whisperx_entry in whisperx_results:
-                if not whisperx_entry.get("text", "").strip():
+            for trans_entry in transcription_results:
+                text = trans_entry.get("text", "").strip()
+                if not text:
                     continue
 
-                # Enhanced speaker identification (refine WhisperX results)
-                enhanced_speaker = await self.speaker_service.identify_speaker(
+                # 2. SPEAKER IDENTIFICATION
+                speaker = await self.speaker_service.identify_speaker(
                     audio_array, session_id, sample_rate
                 )
                 
-                # Use enhanced speaker ID if more confident, otherwise use WhisperX
-                final_speaker = enhanced_speaker if enhanced_speaker else whisperx_entry.get("speaker", "Speaker_1")
+                # 3. EMOTION ANALYSIS - Analyze emotion from text
+                emotion_result = await self.emotion_service.analyze_text(text)
 
-                # Emotion analysis
-                emotion_result = await self.emotion_service.analyze_text(whisperx_entry["text"])
-
-                # Update speaker statistics
+                # 4. Update speaker statistics
                 await self.speaker_service.update_speaker_statistics(
-                    final_speaker,
+                    speaker,
                     speaking_duration=len(audio_array) / sample_rate,
-                    word_count=whisperx_entry.get("word_count", 0)
+                    word_count=len(text.split())
                 )
 
-                # Build comprehensive entry
+                # 5. Build comprehensive entry
                 entry = {
                     "id": str(uuid.uuid4()),
                     "session_id": session_id,
                     "participant_id": participant_id,
                     "timestamp": datetime.utcnow().isoformat(),
-                    "text": whisperx_entry["text"],
-                    "speaker": final_speaker,
-                    "confidence": whisperx_entry.get("confidence", 0.0),
-                    "word_count": whisperx_entry.get("word_count", len(whisperx_entry["text"].split())),
-                    "processing_time_ms": whisperx_entry.get("processing_time_ms", 0.0),
-                    "words": whisperx_entry.get("words", []),
+                    
+                    # Transcription data
+                    "text": text,
+                    "speaker": speaker,
+                    "confidence": trans_entry.get("confidence", 0.0),
+                    "word_count": len(text.split()),
+                    "processing_time_ms": trans_entry.get("processing_time_ms", 0.0),
+                    "words": trans_entry.get("words", []),
                     
                     # Emotion analysis results
                     "emotion": emotion_result.get("emotion", "neutral"),
@@ -164,10 +147,10 @@ class OrchestratorService:
                 
                 # Add to session transcript
                 session.transcript_entries.append(entry)
-                if final_speaker not in session.speakers:
-                    session.speakers.append(final_speaker)
+                if speaker not in session.speakers:
+                    session.speakers.append(speaker)
 
-            # Return the most recent entry or combined result
+            # Return the result
             if len(processed_entries) == 1:
                 return processed_entries[0]
             elif len(processed_entries) > 1:
@@ -190,16 +173,7 @@ class OrchestratorService:
             return None
 
     async def generate_realtime_summary(self, session_id: str, last_n_entries: int = 10) -> Dict[str, Any]:
-        """
-        Generate a real-time summary of recent conversation.
-
-        Args:
-            session_id (str): Session identifier
-            last_n_entries (int): Number of recent entries to summarize
-
-        Returns:
-            Dict with real-time summary
-        """
+        """Generate a real-time summary of recent conversation."""
         try:
             session = self.active_sessions.get(session_id)
             if not session or not session.transcript_entries:
@@ -248,15 +222,7 @@ class OrchestratorService:
             }
 
     async def generate_session_insights(self, session_id: str) -> Dict[str, Any]:
-        """
-        Generate comprehensive insights for an entire session.
-
-        Args:
-            session_id (str): Session identifier
-
-        Returns:
-            Dict with session insights and analytics
-        """
+        """Generate comprehensive insights for an entire session."""
         try:
             session = self.active_sessions.get(session_id)
             if not session:
@@ -316,16 +282,7 @@ class OrchestratorService:
         session_id: str, 
         include_metadata: bool = True
     ) -> Dict[str, Any]:
-        """
-        Get the complete transcript for a session.
-
-        Args:
-            session_id (str): Session identifier
-            include_metadata (bool): Whether to include detailed metadata
-
-        Returns:
-            Dict with transcript data
-        """
+        """Get the complete transcript for a session."""
         try:
             session = self.active_sessions.get(session_id)
             if not session:
@@ -366,15 +323,7 @@ class OrchestratorService:
             return {"error": str(e)}
 
     async def close_session(self, session_id: str) -> Dict[str, Any]:
-        """
-        Close a session and generate final summary.
-
-        Args:
-            session_id (str): Session identifier
-
-        Returns:
-            Dict with final session data and summary
-        """
+        """Close a session and generate final summary."""
         try:
             session = self.active_sessions.get(session_id)
             if not session:
@@ -412,12 +361,7 @@ class OrchestratorService:
             return {"error": str(e)}
 
     def list_active_sessions(self) -> List[Dict[str, Any]]:
-        """
-        Get list of all active sessions.
-
-        Returns:
-            List of active session summaries
-        """
+        """Get list of all active sessions."""
         active_sessions = []
         
         for session_id, session in self.active_sessions.items():
@@ -435,36 +379,8 @@ class OrchestratorService:
         
         return active_sessions
 
-    async def cleanup_inactive_sessions(self, max_inactive_hours: int = 24) -> int:
-        """
-        Clean up sessions that have been inactive for too long.
 
-        Args:
-            max_inactive_hours (int): Maximum hours of inactivity before cleanup
-
-        Returns:
-            int: Number of sessions cleaned up
-        """
-        cleanup_count = 0
-        current_time = datetime.utcnow()
-        
-        sessions_to_remove = []
-        
-        for session_id, session in self.active_sessions.items():
-            hours_inactive = (current_time - session.last_activity).total_seconds() / 3600
-            
-            if hours_inactive > max_inactive_hours:
-                sessions_to_remove.append(session_id)
-
-        for session_id in sessions_to_remove:
-            del self.active_sessions[session_id]
-            cleanup_count += 1
-            logger.info(f"Cleaned up inactive session: {session_id}")
-
-        return cleanup_count
-
-
-# ---------------- Singleton accessor ---------------- #
+# Singleton accessor
 _orchestrator_service: Optional[OrchestratorService] = None
 
 
