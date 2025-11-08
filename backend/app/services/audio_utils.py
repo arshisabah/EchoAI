@@ -113,19 +113,32 @@ def _bytes_to_numpy_soundfile(audio_bytes: bytes, target_sr: int) -> Tuple[np.nd
 def _bytes_to_numpy_raw(audio_bytes: bytes, sample_rate: int) -> Tuple[np.ndarray, int]:
     """Convert raw PCM16 bytes to numpy array."""
     # Assume raw PCM16 (little-endian)
+    
+    # ✅ FIX: Ensure we have an even number of bytes for int16 samples
+    if len(audio_bytes) % 2 != 0:
+        logger.warning(f"Odd-sized audio buffer ({len(audio_bytes)} bytes), truncating last byte")
+        audio_bytes = audio_bytes[:-1]
+    
     n_samples = len(audio_bytes) // 2
     
     if n_samples == 0:
+        logger.warning("Empty audio buffer after processing")
         return np.array([], dtype=np.float32), sample_rate
     
-    # Unpack as signed 16-bit integers
-    fmt = "<" + "h" * n_samples
-    int16_data = struct.unpack(fmt, audio_bytes)
-    
-    # Convert to float32 [-1.0, 1.0]
-    audio_array = np.array(int16_data, dtype=np.float32) / 32768.0
-    
-    return audio_array, sample_rate
+    try:
+        # Unpack as signed 16-bit integers
+        fmt = "<" + "h" * n_samples
+        int16_data = struct.unpack(fmt, audio_bytes)
+        
+        # Convert to float32 [-1.0, 1.0]
+        audio_array = np.array(int16_data, dtype=np.float32) / 32768.0
+        
+        logger.debug(f"Successfully converted {len(audio_bytes)} bytes to {len(audio_array)} samples")
+        return audio_array, sample_rate
+        
+    except struct.error as e:
+        logger.error(f"Failed to unpack audio bytes: {e}. Buffer size: {len(audio_bytes)} bytes")
+        return np.array([], dtype=np.float32), sample_rate
 
 
 def resample_audio(audio: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:

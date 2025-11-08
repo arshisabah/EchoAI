@@ -117,9 +117,20 @@ class OrchestratorService:
             audio_array = buffered_audio
 
             # ----- TRANSCRIPTION -----
-            transcription_results = await self.transcription_service.process_audio_chunk(
-                audio_array, session_id
+            asr_results = await self.transcription_service.transcribe_chunk(
+                audio_array, session_id, sample_rate
             )
+
+            # Convert ASRResult objects to dictionaries
+            transcription_results = []
+            for asr_result in asr_results:
+                transcription_results.append({
+                    "text": asr_result.text,
+                    "confidence": asr_result.confidence,
+                    "words": asr_result.words,
+                    "processing_time_ms": asr_result.processing_time_ms,
+                    "speaker": asr_result.speaker
+                })
 
             if not transcription_results:
                 logger.debug(f"No transcription results for session {session_id}")

@@ -18,7 +18,7 @@ from fastapi import (
     Form,
 )
 
-from app.modules.realtime_store import get_transcript_store, create_session
+from app.modules.realtime_store import get_transcript_store
 from app.services.orchestrator_service import get_orchestrator_service, SessionData
 
 logger = logging.getLogger(__name__)
@@ -51,12 +51,14 @@ async def websocket_transcript_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
     logger.info(f"✅ WebSocket connected for session: {session_id}")
 
-    # ✅ FIX 1 — await create_session (it’s async)
+    # ✅ FIX 1 — Create session in store (async)
     try:
-        await create_session(session_id, {"connection_type": "websocket"})
+        store = get_transcript_store()
+        await store.create_session(session_id, {"connection_type": "websocket"})
     except Exception as e:
         logger.warning(f"Session creation warning: {e}")
 
+    #important : get ochestrator service before using it
     orchestrator = get_orchestrator_service()
 
     # Ensure session exists in orchestrator
@@ -97,9 +99,13 @@ async def websocket_transcript_endpoint(websocket: WebSocket, session_id: str):
                     "timestamp": datetime.utcnow().isoformat()
                 })
 
+            # Around line 100-131, replace the audio_chunk handling with:
+
             elif message_type == "audio_chunk":
                 # Process audio chunk
                 audio_base64 = message_data.get("audio_data", "")
+                sample_rate = message_data.get("sample_rate", 16000)
+                
                 if not audio_base64:
                     await websocket.send_json({
                         "type": "error",
@@ -108,26 +114,96 @@ async def websocket_transcript_endpoint(websocket: WebSocket, session_id: str):
                     continue
 
                 try:
+                    # Send acknowledgment immediately
+                    await websocket.send_json({
+                        "type": "audio_received",
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
+                    
                     audio_bytes = base64.b64decode(audio_base64)
+                    
+                    # Validate audio size
+                    if len(audio_bytes) == 0:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "Empty audio chunk"
+                        })
+                        continue
+                        
+                    logger.debug(f"📥 Processing audio chunk: {len(audio_bytes)} bytes, sample_rate: {sample_rate}")
+                    
                 except Exception as e:
-                    logger.error(f"Failed to decode audio: {e}")
+                    logger.error(f"Failed to decode audio: {e}", exc_info=True)
                     await websocket.send_json({
                         "type": "error",
-                        "message": "Invalid audio encoding"
+                        "message": f"Invalid audio encoding: {str(e)}"
                     })
                     continue
 
                 # Process through orchestrator (transcription + emotion)
-                result = await orchestrator.process_audio_chunk(audio_bytes, session_id)
+                try:
+                    result = await orchestrator.process_audio_chunk(audio_bytes, session_id)
 
-                if result:
-                    # Send back the result with transcription and emotion
+                    if result:
+                        # Send back the result with transcription and emotion
+                        await websocket.send_json({
+                            "type": "transcript_entry",
+                            "data": result,
+                            "timestamp": datetime.utcnow().isoformat()
+                        })
+                        logger.info(f"📝 Sent transcript: {result.get('text', '')[:50]}...")
+                    else:
+                        # No speech detected or processing returned None
+                        logger.debug(f"No speech detected in audio chunk for session {session_id}")
+                        await websocket.send_json({
+                            "type": "no_speech",
+                            "message": "No speech detected in audio chunk",
+                            "timestamp": datetime.utcnow().isoformat()
+                        })
+                        
+                except Exception as e:
+                    logger.error(f"Error processing audio chunk for session {session_id}: {e}", exc_info=True)
                     await websocket.send_json({
-                        "type": "transcript_entry",
-                        "data": result,
-                        "timestamp": datetime.utcnow().isoformat()
+                        "type": "error",
+                        "message": f"Processing failed: {str(e)}"
                     })
-                    logger.debug(f"📝 Sent transcript: {result.get('text', '')[:50]}...")
+
+
+                #end    
+                except Exception as e:
+                    logger.error(f"Failed to decode audio: {e}", exc_info=True)
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": f"Invalid audio encoding: {str(e)}"
+                    })
+                    continue
+
+                # Process through orchestrator (transcription + emotion)
+                try:
+                    result = await orchestrator.process_audio_chunk(audio_bytes, session_id)
+
+                    if result:
+                        # Send back the result with transcription and emotion
+                        await websocket.send_json({
+                            "type": "transcript_entry",
+                            "data": result,
+                            "timestamp": datetime.utcnow().isoformat()
+                        })
+                        logger.debug(f"📝 Sent transcript: {result.get('text', '')[:50]}...")
+                    else:
+                        # No speech detected or processing returned None
+                        await websocket.send_json({
+                            "type": "no_speech",
+                            "message": "No speech detected in audio chunk",
+                            "timestamp": datetime.utcnow().isoformat()
+                        })
+                        
+                except Exception as e:
+                    logger.error(f"Error processing audio chunk: {e}", exc_info=True)
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": f"Processing failed: {str(e)}"
+                    })
 
             elif message_type == "get_summary":
                 # Request real-time summary

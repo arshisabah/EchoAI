@@ -76,6 +76,27 @@ class EmotionService:
             content = response.choices[0].message.content.strip()
             
             try:
+                # ✅ FIX: Remove markdown code blocks if present
+                if content.startswith("```"):
+                    # Extract JSON from markdown code block
+                    lines = content.split("\n")
+                    json_lines = []
+                    in_code_block = False
+                    
+                    for line in lines:
+                        if line.startswith("```"):
+                            in_code_block = not in_code_block
+                            continue
+                        if in_code_block or (not line.startswith("```")):
+                            json_lines.append(line)
+                    
+                    content = "\n".join(json_lines).strip()
+                
+                # ✅ FIX: Handle empty responses
+                if not content:
+                    logger.warning("Empty content from OpenAI, using fallback")
+                    return self._fallback_emotion_analysis(text)
+                
                 result = json.loads(content)
                 emotion = result.get("emotion", "neutral").lower()
                 confidence = float(result.get("confidence", 0.5))
@@ -97,7 +118,7 @@ class EmotionService:
                 }
                 
             except json.JSONDecodeError as e:
-                logger.warning(f"JSON parse error: {e}")
+                logger.warning(f"JSON parse error: {e}. Content: {content[:200]}")
                 return self._fallback_emotion_analysis(text)
 
         except Exception as e:

@@ -241,8 +241,27 @@ class SummaryService:
             )
 
             content = response.choices[0].message.content.strip()
-            
+
             try:
+                # ✅ FIX: Remove markdown code blocks if present
+                if content.startswith("```"):
+                    lines = content.split("\n")
+                    json_lines = []
+                    in_code_block = False
+                    
+                    for line in lines:
+                        if line.startswith("```"):
+                            in_code_block = not in_code_block
+                            continue
+                        if in_code_block or (not line.startswith("```")):
+                            json_lines.append(line)
+                    
+                    content = "\n".join(json_lines).strip()
+                
+                # ✅ FIX: Handle empty responses
+                if not content or content == "[]":
+                    return []
+                
                 action_items = json.loads(content)
                 # Ensure it's a list
                 if isinstance(action_items, dict):
@@ -260,8 +279,8 @@ class SummaryService:
                 
                 return action_items
                 
-            except json.JSONDecodeError:
-                logger.warning(f"Failed to parse action items JSON: {content}")
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse action items JSON: {e}. Content: {content[:200]}")
                 return []
 
         except Exception as e:

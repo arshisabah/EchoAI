@@ -1,49 +1,127 @@
-# requirements.txt - EchoAI Backend Dependencies
+# 
+# 
+fastapi 
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-multipart
+websockets
+# 
+openai
+anthropic
+httpx
+aiohttp
+# 
+torch
+torchaudio
+transformers
+# 
+openai-whisper
+# 
+# 
+librosa
+soundfile
+pydub
+numpy
+# 
+asyncpg # requirements.txt - EchoAI Backend Dependencies
 
 # Core Framework
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-pydantic==2.5.0
-pydantic-settings==2.1.0
-python-multipart==0.0.6
-websockets==12.0
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-multipart
+websockets
 
 # API Clients (REQUIRED for transcription and emotion analysis)
-openai==1.12.0
-anthropic==0.18.0
-httpx==0.26.0
-aiohttp==3.9.1
+openai
+anthropic
+httpx
+aiohttp
 
 # AI/ML Libraries
-torch==2.4.0
-torchaudio==2.4.0
-transformers==4.37.0
+torch
+torchaudio
+transformers
 
 # Transcription (choose one or all)
-openai-whisper==20231117  # Local Whisper (fallback)
+openai-whisper  # Local Whisper (fallback)
 # git+https://github.com/m-bain/whisperX.git  # WhisperX (optional, best quality)
 
 # Audio Processing (REQUIRED)
-librosa==0.10.1
-soundfile==0.12.1
-pydub==0.25.1
-numpy==1.24.3
+librosa
+soundfile
+pydub
+numpy
 
 # Database
-asyncpg==0.29.0  # PostgreSQL
-motor==3.3.2     # MongoDB
-sqlalchemy==2.0.25
-psycopg2-binary==2.9.9
+asyncpg  # PostgreSQL
+motor  # MongoDB
+sqlalchemy
+psycopg2-binary
 
 # Utilities
-python-dotenv==1.0.0
-aiofiles==23.2.1
-python-jose[cryptography]==3.3.0
+python-dotenv
+aiofiles
+python-jose[cryptography]
 
 # Monitoring
-psutil==5.9.8
+psutil
 
 # Development & Testing
-pytest==7.4.0
-pytest-asyncio==0.21.0
-black==23.12.0
+pytest
+pytest-asyncio
+black
+motor
+sqlalchemy
+psycopg2-binary
+# 
+python-dotenv
+aiofiles
+python-jose[cryptography]
+# 
+psutil
+# 
+pytest
+pytest-asyncio
+black
+# 
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-multipart
+websockets
+# 
+openai
+anthropic
+httpx
+aiohttp
+# 
+torch
+torchaudio
+transformers
+# 
+openai-whisper
+# 
+# 
+librosa
+soundfile
+pydub
+numpy
+# 
+asyncpg
+motor
+sqlalchemy
+psycopg2-binary
+# 
+python-dotenv
+aiofiles
+python-jose[cryptography]
+# 
+psutil
+# 
+pytest
+pytest-asyncio
+black
