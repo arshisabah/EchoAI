@@ -47,6 +47,9 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
             case 'welcome':
             case 'connected':
               console.log('Welcome message:', data.message);
+              if (data.room_info?.participants) {
+                setParticipants(data.room_info.participants);
+              }
               break;
 
             case 'live_transcript':

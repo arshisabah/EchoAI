@@ -2,14 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Mic, MicOff, Video, VideoOff, LogOut, Users,
-  MessageSquare, FileText, Heart, Phone, Settings
+  MessageSquare, FileText, Heart, Phone, Settings, CheckSquare
 } from 'lucide-react';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { useWebRTC } from '../hooks/useWebRTC';
 import VideoGrid from './Meeting/VideoGrid';
 import ChatPanel from './Meeting/ChatPanel';
-import TranscriptPanel from './Meeting/TranscriptPanel';
+import TranscriptPanel from './Meeting/Transcription';
 import EmotionPanel from './Meeting/EmotionPanel';
 import SummaryPanel from './Meeting/SummaryPanel';
 import TaskPanel from './Meeting/TaskPanel';
@@ -248,8 +248,6 @@ const MeetingRoom = ({ userInfo }) => {
 
         {/* Right Side - Panels */}
         <div className="meeting-side-panel">
-          // Around line 150-200, replace the panel tabs section with:
-
           {/* Panel Tabs */}
           <div className="panel-tabs">
             <button
