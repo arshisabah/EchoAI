@@ -1,36 +1,56 @@
-// src/components/MeetingRoom.jsx
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Mic, MicOff, LogOut, Users, FileText, CheckSquare } from 'lucide-react';
+import {
+  Mic, MicOff, Video, VideoOff, LogOut, Users,
+  MessageSquare, FileText, Heart, Phone, Settings
+} from 'lucide-react';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
-import TranscriptViewer from './TranscriptViewer';
-import EmotionIndicator from './EmotionIndicator';
-import TaskManager from './TaskManager';
-import SummaryPanel from './SummaryPanel';
+import { useWebRTC } from '../hooks/useWebRTC';
+import VideoGrid from './Meeting/VideoGrid';
+import ChatPanel from './Meeting/ChatPanel';
+import TranscriptPanel from './Meeting/TranscriptPanel';
+import EmotionPanel from './Meeting/EmotionPanel';
+import SummaryPanel from './Meeting/SummaryPanel';
+import TaskPanel from './Meeting/TaskPanel';
 import { meetingAPI } from '../services/api';
 
 const MeetingRoom = ({ userInfo }) => {
   const { roomId } = useParams();
   const navigate = useNavigate();
-  
+
   const [roomInfo, setRoomInfo] = useState(null);
-  const [activeTab, setActiveTab] = useState('transcript');
+  const [activePanel, setActivePanel] = useState('transcript');
   const [showPassword, setShowPassword] = useState(false);
   const [password, setPassword] = useState('');
+  const [emotionHistory, setEmotionHistory] = useState([]);
 
   // WebSocket connection
   const {
     isConnected,
     transcripts,
     participants,
+    chatMessages,
     error: wsError,
     lastMessage,
     sendAudioChunk,
+    sendChatMessage,
     disconnect,
   } = useWebSocket(roomId, userInfo.user_id, userInfo.username, password);
 
-  // Audio recording
+  // WebRTC for video
+  const {
+    localStream,
+    remoteStreams,
+    isVideoEnabled,
+    isAudioEnabled,
+    startLocalMedia,
+    stopLocalMedia,
+    toggleVideo,
+    toggleAudio,
+  } = useWebRTC(roomId, userInfo.user_id);
+
+  // Audio recording for transcription
   const {
     isRecording,
     error: audioError,
@@ -46,12 +66,29 @@ const MeetingRoom = ({ userInfo }) => {
     loadRoomInfo();
   }, [roomId]);
 
+  // Start video when connected
+  useEffect(() => {
+    if (isConnected && !localStream) {
+      startLocalMedia(true).catch(console.error);
+    }
+
+    return () => {
+      stopLocalMedia();
+    };
+  }, [isConnected]);
+
+  // Track emotion history
+  useEffect(() => {
+    if (lastMessage?.type === 'live_transcript' && lastMessage.emotion) {
+      setEmotionHistory(prev => [...prev, lastMessage.emotion].slice(-10));
+    }
+  }, [lastMessage]);
+
   const loadRoomInfo = async () => {
     try {
       const data = await meetingAPI.getRoomInfo(roomId);
       setRoomInfo(data);
-      
-      // Check if password required
+
       if (data.password && !password) {
         setShowPassword(true);
       }
@@ -68,6 +105,7 @@ const MeetingRoom = ({ userInfo }) => {
     if (isRecording) {
       toggleRecording();
     }
+    stopLocalMedia();
     disconnect();
     navigate('/');
   };
@@ -75,18 +113,37 @@ const MeetingRoom = ({ userInfo }) => {
   const handlePasswordSubmit = (e) => {
     e.preventDefault();
     setShowPassword(false);
-    // WebSocket will reconnect with password
   };
 
-  // Get current emotion from last message
-  const currentEmotion = lastMessage?.type === 'live_transcript' 
-    ? lastMessage.emotion 
+  const handleExportTranscript = async () => {
+    try {
+      const data = await meetingAPI.exportMeeting(roomId, 'json');
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `meeting_${roomId}_${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Export failed:', error);
+      alert('Failed to export transcript');
+    }
+  };
+
+  const handleSendChat = (message) => {
+    sendChatMessage(message);
+  };
+
+  const currentEmotion = lastMessage?.type === 'live_transcript'
+    ? lastMessage.emotion
     : 'neutral';
 
   const emotionGuidance = lastMessage?.type === 'live_transcript'
     ? lastMessage.emotion_guidance
     : null;
 
+  // Password modal
   if (showPassword) {
     return (
       <div className="password-prompt">
@@ -117,111 +174,159 @@ const MeetingRoom = ({ userInfo }) => {
 
   return (
     <div className="meeting-room">
-      {/* Room Header */}
-      <div className="room-header">
-        <div className="room-title">
+      {/* Top Bar */}
+      <div className="meeting-top-bar">
+        <div className="meeting-info">
           <h2>{roomInfo?.room_name || roomId}</h2>
-          <span className={`connection-status ${isConnected ? 'connected' : 'disconnected'}`}>
-            {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
-          </span>
+          <div className="meeting-status">
+            <span className={`status-dot ${isConnected ? 'connected' : 'disconnected'}`}></span>
+            <span>{isConnected ? 'Connected' : 'Disconnected'}</span>
+            <span className="separator">•</span>
+            <Users size={14} />
+            <span>{participants.length} participant{participants.length !== 1 ? 's' : ''}</span>
+          </div>
         </div>
 
-        <div className="room-controls">
+        <div className="meeting-controls">
           <button
-            className={`btn-icon ${isRecording ? 'recording' : ''}`}
-            onClick={toggleRecording}
-            title={isRecording ? 'Stop Recording' : 'Start Recording'}
+            className={`btn-control ${!isAudioEnabled ? 'muted' : ''}`}
+            onClick={toggleAudio}
+            title={isAudioEnabled ? 'Mute' : 'Unmute'}
           >
-            {isRecording ? <MicOff size={20} /> : <Mic size={20} />}
-            {isRecording && <span className="recording-pulse"></span>}
+            {isAudioEnabled ? <Mic size={20} /> : <MicOff size={20} />}
           </button>
 
-          <button className="btn-danger" onClick={handleLeaveRoom} title="Leave Room">
-            <LogOut size={20} />
+          <button
+            className={`btn-control ${!isVideoEnabled ? 'muted' : ''}`}
+            onClick={toggleVideo}
+            title={isVideoEnabled ? 'Stop Video' : 'Start Video'}
+          >
+            {isVideoEnabled ? <Video size={20} /> : <VideoOff size={20} />}
+          </button>
+
+          <button
+            className={`btn-control ${isRecording ? 'recording' : ''}`}
+            onClick={toggleRecording}
+            title={isRecording ? 'Stop Transcription' : 'Start Transcription'}
+          >
+            <FileText size={20} />
+            {isRecording && <span className="recording-indicator"></span>}
+          </button>
+
+          <div className="control-divider"></div>
+
+          <button className="btn-control-danger" onClick={handleLeaveRoom}>
+            <Phone size={20} />
             Leave
           </button>
         </div>
       </div>
 
-      {/* Error Display */}
+      {/* Error Banner */}
       {(wsError || audioError) && (
         <div className="error-banner">
           ⚠️ {wsError || audioError}
         </div>
       )}
 
-      {/* Main Content Area */}
-      <div className="room-content">
-        {/* Left Panel - Transcripts */}
-        <div className="room-left-panel">
+      {/* Main Content */}
+      <div className="meeting-content">
+        {/* Left Side - Video Grid */}
+        <div className="meeting-video-section">
+          <VideoGrid
+            localStream={localStream}
+            remoteStreams={remoteStreams}
+            participants={[
+              { user_id: userInfo.user_id, username: userInfo.username, is_muted: !isAudioEnabled },
+              ...participants
+            ]}
+            currentUserId={userInfo.user_id}
+            isLocalVideoEnabled={isVideoEnabled}
+            isLocalAudioEnabled={isAudioEnabled}
+          />
+        </div>
+
+        {/* Right Side - Panels */}
+        <div className="meeting-side-panel">
+          // Around line 150-200, replace the panel tabs section with:
+
+          {/* Panel Tabs */}
           <div className="panel-tabs">
             <button
-              className={`tab ${activeTab === 'transcript' ? 'active' : ''}`}
-              onClick={() => setActiveTab('transcript')}
+              className={`panel-tab ${activePanel === 'transcript' ? 'active' : ''}`}
+              onClick={() => setActivePanel('transcript')}
             >
               <FileText size={18} />
-              Transcript
+              <span>Transcript</span>
+              {transcripts.length > 0 && (
+                <span className="tab-badge">{transcripts.length}</span>
+              )}
             </button>
             <button
-              className={`tab ${activeTab === 'tasks' ? 'active' : ''}`}
-              onClick={() => setActiveTab('tasks')}
+              className={`panel-tab ${activePanel === 'chat' ? 'active' : ''}`}
+              onClick={() => setActivePanel('chat')}
+            >
+              <MessageSquare size={18} />
+              <span>Chat</span>
+              {chatMessages.length > 0 && (
+                <span className="tab-badge">{chatMessages.length}</span>
+              )}
+            </button>
+            <button
+              className={`panel-tab ${activePanel === 'emotion' ? 'active' : ''}`}
+              onClick={() => setActivePanel('emotion')}
+            >
+              <Heart size={18} />
+              <span>Emotion</span>
+            </button>
+            <button
+              className={`panel-tab ${activePanel === 'tasks' ? 'active' : ''}`}
+              onClick={() => setActivePanel('tasks')}
             >
               <CheckSquare size={18} />
-              Tasks
+              <span>Tasks</span>
             </button>
             <button
-              className={`tab ${activeTab === 'summary' ? 'active' : ''}`}
-              onClick={() => setActiveTab('summary')}
+              className={`panel-tab ${activePanel === 'summary' ? 'active' : ''}`}
+              onClick={() => setActivePanel('summary')}
             >
               <FileText size={18} />
-              Summary
+              <span>Summary</span>
             </button>
           </div>
 
+          {/* Panel Content */}
           <div className="panel-content">
-            {activeTab === 'transcript' && (
-              <TranscriptViewer transcripts={transcripts} />
+            {activePanel === 'transcript' && (
+              <TranscriptPanel
+                transcripts={transcripts}
+                onExport={handleExportTranscript}
+              />
             )}
-            {activeTab === 'tasks' && (
-              <TaskManager roomId={roomId} />
+            {activePanel === 'chat' && (
+              <ChatPanel
+                messages={chatMessages}
+                onSendMessage={handleSendChat}
+                currentUser={userInfo}
+              />
             )}
-            {activeTab === 'summary' && (
+            {activePanel === 'emotion' && (
+              <EmotionPanel
+                currentEmotion={currentEmotion}
+                emotionGuidance={emotionGuidance}
+                emotionHistory={emotionHistory}
+              />
+            )}
+            {activePanel === 'tasks' && (
+              <TaskPanel
+                roomId={roomId}
+                currentUser={userInfo}
+              />
+            )}
+            {activePanel === 'summary' && (
               <SummaryPanel roomId={roomId} />
             )}
           </div>
-        </div>
-
-        {/* Right Panel - Participants & Emotion */}
-        <div className="room-right-panel">
-          {/* Participants */}
-          <div className="participants-panel">
-            <h3>
-              <Users size={18} />
-              Participants ({participants.length})
-            </h3>
-            <div className="participants-list">
-              {participants.map((p) => (
-                <div key={p.user_id} className="participant-item">
-                  <div className="participant-avatar">
-                    {p.username.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="participant-info">
-                    <span className="participant-name">{p.username}</span>
-                    <span className="participant-role">{p.role}</span>
-                  </div>
-                  {p.is_speaking && (
-                    <span className="speaking-indicator">🎤</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Emotion Indicator */}
-          <EmotionIndicator 
-            emotion={currentEmotion}
-            guidance={emotionGuidance}
-          />
         </div>
       </div>
     </div>

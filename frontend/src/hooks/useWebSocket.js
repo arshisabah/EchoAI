@@ -1,4 +1,3 @@
-// src/hooks/useWebSocket.js
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
@@ -7,6 +6,7 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
   const [isConnected, setIsConnected] = useState(false);
   const [transcripts, setTranscripts] = useState([]);
   const [participants, setParticipants] = useState([]);
+  const [chatMessages, setChatMessages] = useState([]);
   const [error, setError] = useState(null);
   const [lastMessage, setLastMessage] = useState(null);
   
@@ -15,7 +15,6 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 5;
 
-  // Connect to WebSocket
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       console.log('WebSocket already connected');
@@ -34,7 +33,6 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
         setError(null);
         reconnectAttempts.current = 0;
         
-        // Send ping to confirm connection
         sendMessage({ type: 'ping' });
       };
 
@@ -47,17 +45,24 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
 
           switch (data.type) {
             case 'welcome':
+            case 'connected':
               console.log('Welcome message:', data.message);
               break;
 
             case 'live_transcript':
-              setTranscripts((prev) => [data, ...prev].slice(0, 100)); // Keep last 100
+              setTranscripts((prev) => [data, ...prev].slice(0, 100));
               break;
 
             case 'participant_joined':
               setParticipants((prev) => {
                 if (!prev.some(p => p.user_id === data.user_id)) {
-                  return [...prev, { user_id: data.user_id, username: data.username, role: data.role }];
+                  return [...prev, { 
+                    user_id: data.user_id, 
+                    username: data.username, 
+                    role: data.role,
+                    is_speaking: false,
+                    is_muted: false
+                  }];
                 }
                 return prev;
               });
@@ -71,14 +76,14 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
               setParticipants((prev) =>
                 prev.map(p =>
                   p.user_id === data.user_id
-                    ? { ...p, is_speaking: data.is_speaking, emotion_state: data.emotion_state }
+                    ? { ...p, is_speaking: data.is_speaking, is_muted: data.is_muted }
                     : p
                 )
               );
               break;
 
             case 'chat_message':
-              // Handle chat messages if needed
+              setChatMessages((prev) => [...prev, data]);
               break;
 
             case 'room_ended':
@@ -112,7 +117,6 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
         console.log('WebSocket closed:', event.code, event.reason);
         setIsConnected(false);
 
-        // Attempt to reconnect
         if (reconnectAttempts.current < maxReconnectAttempts) {
           reconnectAttempts.current++;
           const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
@@ -131,7 +135,6 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
     }
   }, [roomId, userId, username, password, role]);
 
-  // Disconnect from WebSocket
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -145,7 +148,6 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
     setIsConnected(false);
   }, []);
 
-  // Send message through WebSocket
   const sendMessage = useCallback((message) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(message));
@@ -156,7 +158,6 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
     }
   }, []);
 
-  // Send audio chunk
   const sendAudioChunk = useCallback((audioData, sampleRate = 16000) => {
     return sendMessage({
       type: 'audio_chunk',
@@ -165,7 +166,6 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
     });
   }, [sendMessage]);
 
-  // Send chat message
   const sendChatMessage = useCallback((messageText) => {
     return sendMessage({
       type: 'chat',
@@ -173,7 +173,6 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
     });
   }, [sendMessage]);
 
-  // Auto-connect on mount
   useEffect(() => {
     connect();
 
@@ -182,13 +181,12 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
     };
   }, [connect, disconnect]);
 
-  // Send periodic ping
   useEffect(() => {
     if (!isConnected) return;
 
     const pingInterval = setInterval(() => {
       sendMessage({ type: 'ping' });
-    }, 30000); // Ping every 30 seconds
+    }, 30000);
 
     return () => clearInterval(pingInterval);
   }, [isConnected, sendMessage]);
@@ -197,6 +195,7 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
     isConnected,
     transcripts,
     participants,
+    chatMessages,
     error,
     lastMessage,
     connect,

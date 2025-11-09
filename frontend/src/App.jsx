@@ -1,20 +1,41 @@
-// src/App.jsx
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import Navbar from './components/Navbar';
+import Login from './components/Auth/Login';
 import Dashboard from './components/Dashboard';
 import MeetingRoom from './components/MeetingRoom';
 import AnalyticsDashboard from './components/AnalyticsDashboard';
 import { healthAPI } from './services/api';
 import './App.css';
 
-function App() {
-  const [backendStatus, setBackendStatus] = useState('checking');
-  const [userInfo, setUserInfo] = useState(null);
+const ProtectedRoute = ({ children }) => {
+  const { user, loading } = useAuth();
 
-  // Check backend health on mount
+  if (loading) {
+    return (
+      <div className="app-loading">
+        <div className="loading-spinner"></div>
+        <p>Loading...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return children;
+};
+
+const AppContent = () => {
+  const { user, logout } = useAuth();
+  const [backendStatus, setBackendStatus] = useState('checking');
+
   useEffect(() => {
     checkBackendHealth();
+    const interval = setInterval(checkBackendHealth, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const checkBackendHealth = async () => {
@@ -27,57 +48,49 @@ function App() {
     }
   };
 
-  // Initialize user (in production, this would be from authentication)
-  useEffect(() => {
-    const storedUser = localStorage.getItem('echoai_user');
-    if (storedUser) {
-      setUserInfo(JSON.parse(storedUser));
-    } else {
-      // Create default user
-      const defaultUser = {
-        user_id: `user_${Date.now()}`,
-        username: `User_${Math.floor(Math.random() * 1000)}`,
-        role: 'participant',
-      };
-      setUserInfo(defaultUser);
-      localStorage.setItem('echoai_user', JSON.stringify(defaultUser));
-    }
-  }, []);
-
-  const handleLogout = () => {
-    localStorage.removeItem('echoai_user');
-    setUserInfo(null);
-    window.location.reload();
-  };
-
-  if (!userInfo) {
-    return (
-      <div className="app-loading">
-        <div className="loading-spinner"></div>
-        <p>Loading EchoAI...</p>
-      </div>
-    );
-  }
-
   return (
     <Router>
       <div className="app">
-        <Navbar 
-          backendStatus={backendStatus} 
-          userInfo={userInfo}
-          onLogout={handleLogout}
-        />
+        {user && (
+          <Navbar 
+            backendStatus={backendStatus} 
+            userInfo={user}
+            onLogout={logout}
+          />
+        )}
         
         <main className="app-main">
           <Routes>
-            <Route path="/" element={<Dashboard userInfo={userInfo} />} />
-            <Route path="/meeting/:roomId" element={<MeetingRoom userInfo={userInfo} />} />
-            <Route path="/analytics" element={<AnalyticsDashboard />} />
+            <Route path="/login" element={<Login />} />
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
+                  <Dashboard userInfo={user} />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/meeting/:roomId"
+              element={
+                <ProtectedRoute>
+                  <MeetingRoom userInfo={user} />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/analytics"
+              element={
+                <ProtectedRoute>
+                  <AnalyticsDashboard />
+                </ProtectedRoute>
+              }
+            />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
 
-        {backendStatus === 'disconnected' && (
+        {backendStatus === 'disconnected' && user && (
           <div className="backend-status-alert">
             <span>⚠️ Backend disconnected. Attempting to reconnect...</span>
             <button onClick={checkBackendHealth}>Retry</button>
@@ -85,6 +98,14 @@ function App() {
         )}
       </div>
     </Router>
+  );
+};
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
 
