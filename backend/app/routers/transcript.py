@@ -2,10 +2,11 @@
 """
 Fixed transcript router with real-time WebSocket processing.
 """
-
+import uuid
 import logging
 import json
 import base64
+import asyncio
 from datetime import datetime
 from typing import Dict, Any, Optional
 from fastapi import (
@@ -55,11 +56,22 @@ async def websocket_transcript_endpoint(websocket: WebSocket, session_id: str):
     try:
         store = get_transcript_store()
         await store.create_session(session_id, {"connection_type": "websocket"})
+
+        # ✅ Wait briefly for store sync
+        for _ in range(3):
+            if hasattr(store, "session_exists") and await store.session_exists(session_id):
+                break
+            await asyncio.sleep(0.2)
     except Exception as e:
         logger.warning(f"Session creation warning: {e}")
 
     #important : get ochestrator service before using it
     orchestrator = get_orchestrator_service()
+    # ✅ Initialize heartbeat tracking
+    if not hasattr(orchestrator, "last_ping"):
+        orchestrator.last_ping = {}
+
+    orchestrator.last_ping[session_id] = datetime.utcnow()
 
     # Ensure session exists in orchestrator
     if session_id not in orchestrator.active_sessions:
@@ -68,8 +80,15 @@ async def websocket_transcript_endpoint(websocket: WebSocket, session_id: str):
     try:
         # ⚙️ FIX 2 — Do NOT send “connected” immediately
         # Wait until after ping/pong to satisfy test expectations.
-
+    
+        
         while True:
+            # ✅ Check heartbeat timeout before waiting for next data
+            if (datetime.utcnow() - orchestrator.last_ping[session_id]).seconds > 30:
+                logger.warning(f"⏳ Heartbeat timeout for {session_id}")
+                await orchestrator.close_session(session_id)
+                await websocket.close()
+                break
             # Receive message from client
             data = await websocket.receive_text()
 
@@ -85,7 +104,7 @@ async def websocket_transcript_endpoint(websocket: WebSocket, session_id: str):
             # Handle message types
             # ======================
             if message_type == "ping":
-                # ✅ Reply first with pong (tests expect this as first message)
+                orchestrator.last_ping[session_id] = datetime.utcnow()
                 await websocket.send_json({
                     "type": "pong",
                     "timestamp": datetime.utcnow().isoformat()
@@ -110,6 +129,14 @@ async def websocket_transcript_endpoint(websocket: WebSocket, session_id: str):
                     await websocket.send_json({
                         "type": "error",
                         "message": "No audio data provided"
+                    })
+                    continue
+
+                # ✅ Reject oversized chunks before decoding
+                if len(audio_base64) > 5_000_000:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Audio chunk too large (>5MB)"
                     })
                     continue
 
@@ -142,45 +169,15 @@ async def websocket_transcript_endpoint(websocket: WebSocket, session_id: str):
 
                 # Process through orchestrator (transcription + emotion)
                 try:
-                    result = await orchestrator.process_audio_chunk(audio_bytes, session_id)
+                    # ✅ Prevent overlapping chunk processing for same session
+                    if not hasattr(orchestrator, "processing_locks"):
+                        orchestrator.processing_locks = {}
 
-                    if result:
-                        # Send back the result with transcription and emotion
-                        await websocket.send_json({
-                            "type": "transcript_entry",
-                            "data": result,
-                            "timestamp": datetime.utcnow().isoformat()
-                        })
-                        logger.info(f"📝 Sent transcript: {result.get('text', '')[:50]}...")
-                    else:
-                        # No speech detected or processing returned None
-                        logger.debug(f"No speech detected in audio chunk for session {session_id}")
-                        await websocket.send_json({
-                            "type": "no_speech",
-                            "message": "No speech detected in audio chunk",
-                            "timestamp": datetime.utcnow().isoformat()
-                        })
-                        
-                except Exception as e:
-                    logger.error(f"Error processing audio chunk for session {session_id}: {e}", exc_info=True)
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": f"Processing failed: {str(e)}"
-                    })
+                    if session_id not in orchestrator.processing_locks:
+                        orchestrator.processing_locks[session_id] = asyncio.Lock()
 
-
-                #end    
-                except Exception as e:
-                    logger.error(f"Failed to decode audio: {e}", exc_info=True)
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": f"Invalid audio encoding: {str(e)}"
-                    })
-                    continue
-
-                # Process through orchestrator (transcription + emotion)
-                try:
-                    result = await orchestrator.process_audio_chunk(audio_bytes, session_id)
+                    async with orchestrator.processing_locks[session_id]:
+                        result = await orchestrator.process_audio_chunk(audio_bytes, session_id)
 
                     if result:
                         # Send back the result with transcription and emotion
@@ -221,14 +218,25 @@ async def websocket_transcript_endpoint(websocket: WebSocket, session_id: str):
                     "type": "error",
                     "message": f"Unknown message type: {message_type}"
                 })
+            # ✅ Heartbeat timeout check
+            if (datetime.utcnow() - orchestrator.last_ping[session_id]).seconds > 30:
+                logger.warning(f"⏳ Heartbeat timeout for {session_id}")
+                await orchestrator.close_session(session_id)
+                await websocket.close()
+                break
 
     except WebSocketDisconnect:
         logger.info(f"❌ WebSocket disconnected for session: {session_id}")
 
         # ✅ FIX 4 — graceful cleanup to prevent memory leak
         orchestrator = get_orchestrator_service()
+
         if session_id in orchestrator.active_sessions:
-            await orchestrator.close_session(session_id)
+            try:
+                await asyncio.sleep(0.1)  # allow pending tasks to finish
+                await orchestrator.close_session(session_id)
+            except Exception as e:
+                logger.warning(f"Safe close_session failed for {session_id}: {e}")
 
     except Exception as e:
         logger.error(f"WebSocket error for session {session_id}: {e}")
@@ -261,8 +269,8 @@ async def process_transcription(
             await orchestrator.start_session(session_id)
 
         # Process the uploaded audio
-        result = await orchestrator.process_audio_chunk(audio_bytes, session_id)
-
+        unique_id = f"{session_id}_{uuid.uuid4().hex[:6]}"
+        result = await orchestrator.process_audio_chunk(audio_bytes, unique_id)
         if not result:
             return {
                 "message": "No speech detected or transcription failed",
@@ -290,8 +298,9 @@ async def get_session_transcript(session_id: str):
         orchestrator = get_orchestrator_service()
         result = await orchestrator.get_session_transcript(session_id)
         
-        if "error" in result:
-            raise HTTPException(status_code=404, detail=result["error"])
+        if not result or (isinstance(result, dict) and "error" in result):
+            raise HTTPException(status_code=404, detail="Session not found or empty")
+
         
         return result
         
@@ -335,7 +344,7 @@ async def delete_transcript_session(session_id: str):
     try:
         store = get_transcript_store()
         orchestrator = get_orchestrator_service()
-        
+
         # Delete from store
         try:
             store.delete_session(session_id)
@@ -366,6 +375,7 @@ async def list_sessions():
     """List all active sessions."""
     try:
         orchestrator = get_orchestrator_service()
+        
         sessions = orchestrator.list_active_sessions()
         
         return {

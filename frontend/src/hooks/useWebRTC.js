@@ -1,177 +1,198 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import WebRTCService from '../services/WebRTCService'; // ✅ centralized media service
 
-const RTC_CONFIGURATION = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-  ],
-};
+const RTC_CONFIGURATION = WebRTCService.configuration;
 
-const MEDIA_CONSTRAINTS = {
-  video: {
-    width: { ideal: 1280, max: 1920 },
-    height: { ideal: 720, max: 1080 },
-    frameRate: { ideal: 30, max: 30 },
-  },
-  audio: {
-    echoCancellation: true,
-    noiseSuppression: true,
-    autoGainControl: true,
-  },
-};
-
-export const useWebRTC = (roomId, userId) => {
+export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
   const [localStream, setLocalStream] = useState(null);
   const [remoteStreams, setRemoteStreams] = useState(new Map());
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
   const [error, setError] = useState(null);
 
-  const localStreamRef = useRef(null);
   const peerConnectionsRef = useRef(new Map());
 
-  const startLocalMedia = useCallback(async (videoEnabled = true) => {
+  // ✅ Start local camera + mic using the WebRTCService
+  const startLocalMedia = useCallback(async (audioOnly = false) => {
     try {
-      setError(null);
-
-      const constraints = videoEnabled
-        ? MEDIA_CONSTRAINTS
-        : {
-            audio: MEDIA_CONSTRAINTS.audio,
-            video: false,
-          };
-
-      console.log('🎥 Requesting media with constraints:', constraints);
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      
-      localStreamRef.current = stream;
+      const stream = await WebRTCService.startLocalStream(audioOnly);
       setLocalStream(stream);
-      setIsVideoEnabled(videoEnabled && stream.getVideoTracks().length > 0);
-      setIsAudioEnabled(stream.getAudioTracks().length > 0);
-      
-      console.log('✅ Local media started');
+      setIsAudioEnabled(stream.getAudioTracks().some(t => t.enabled));
+      setIsVideoEnabled(stream.getVideoTracks().some(t => t.enabled));
+      console.log('🎥 Local media started via WebRTCService');
       return stream;
     } catch (err) {
-      console.error('❌ Error accessing media devices:', err);
-      
-      let errorMessage = 'Failed to access camera/microphone';
-      if (err.name === 'NotAllowedError') {
-        errorMessage = 'Camera/microphone access denied. Please allow access in your browser settings.';
-      } else if (err.name === 'NotFoundError') {
-        errorMessage = 'No camera/microphone found. Please connect a device and try again.';
-      } else {
-        errorMessage = err.message;
-      }
-      
-      setError(errorMessage);
+      console.error('❌ Failed to start local media:', err);
+      setError(err.message);
       throw err;
     }
   }, []);
 
+  // ✅ Stop media via WebRTCService
   const stopLocalMedia = useCallback(() => {
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => {
-        track.stop();
-        console.log('🛑 Stopped track:', track.kind);
-      });
-      localStreamRef.current = null;
-      setLocalStream(null);
-    }
-
-    // Close all peer connections
-    peerConnectionsRef.current.forEach((pc, peerId) => {
-      pc.close();
-      console.log('🔌 Closed peer connection:', peerId);
-    });
-    peerConnectionsRef.current.clear();
-    setRemoteStreams(new Map());
+    WebRTCService.stopLocalStream();
+    setLocalStream(null);
+    console.log('🛑 Local media stopped');
   }, []);
 
+  // ✅ Toggle video
   const toggleVideo = useCallback(() => {
-    if (localStreamRef.current) {
-      const videoTracks = localStreamRef.current.getVideoTracks();
-      if (videoTracks.length > 0) {
-        const newState = !isVideoEnabled;
-        videoTracks.forEach((track) => {
-          track.enabled = newState;
-        });
-        setIsVideoEnabled(newState);
-        console.log('📹 Video toggled:', newState ? 'ON' : 'OFF');
-      }
-    }
+    const newState = !isVideoEnabled;
+    WebRTCService.toggleVideo(newState);
+    setIsVideoEnabled(newState);
+    console.log('📹 Video toggled:', newState ? 'ON' : 'OFF');
   }, [isVideoEnabled]);
 
+  // ✅ Toggle audio
   const toggleAudio = useCallback(() => {
-    if (localStreamRef.current) {
-      const audioTracks = localStreamRef.current.getAudioTracks();
-      if (audioTracks.length > 0) {
-        const newState = !isAudioEnabled;
-        audioTracks.forEach((track) => {
-          track.enabled = newState;
-        });
-        setIsAudioEnabled(newState);
-        console.log('🎤 Audio toggled:', newState ? 'ON' : 'OFF');
-      }
-    }
+    const newState = !isAudioEnabled;
+    WebRTCService.toggleAudio(newState);
+    setIsAudioEnabled(newState);
+    console.log('🎤 Audio toggled:', newState ? 'ON' : 'OFF');
   }, [isAudioEnabled]);
 
-  const createPeerConnection = useCallback((peerId) => {
-    if (peerConnectionsRef.current.has(peerId)) {
-      return peerConnectionsRef.current.get(peerId);
-    }
-
-    console.log('🔗 Creating peer connection for:', peerId);
-    const pc = new RTCPeerConnection(RTC_CONFIGURATION);
-
-    // Add local stream tracks to peer connection
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => {
-        pc.addTrack(track, localStreamRef.current);
-      });
-    }
-
-    // Handle remote stream
-    pc.ontrack = (event) => {
-      console.log('📥 Received remote track from:', peerId);
-      setRemoteStreams((prev) => {
-        const newMap = new Map(prev);
-        newMap.set(peerId, event.streams[0]);
-        return newMap;
-      });
-    };
-
-    // Handle ICE candidates
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        console.log('🧊 ICE candidate:', event.candidate);
-        // In a real implementation, send this to the signaling server
+  // ✅ Create new PeerConnection for a user
+  const createPeerConnection = useCallback(
+    (peerId) => {
+      if (peerConnectionsRef.current.has(peerId)) {
+        return peerConnectionsRef.current.get(peerId);
       }
-    };
 
-    // Handle connection state changes
-    pc.onconnectionstatechange = () => {
-      console.log(`🔗 Peer ${peerId} connection state:`, pc.connectionState);
-      
-      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-        setRemoteStreams((prev) => {
-          const newMap = new Map(prev);
-          newMap.delete(peerId);
-          return newMap;
+      console.log('🔗 Creating peer connection for:', peerId);
+      const pc = new RTCPeerConnection(RTC_CONFIGURATION);
+
+      // Add local tracks
+      if (WebRTCService.localStream) {
+        WebRTCService.localStream.getTracks().forEach((track) => {
+          pc.addTrack(track, WebRTCService.localStream);
         });
       }
-    };
 
-    peerConnectionsRef.current.set(peerId, pc);
-    return pc;
+      // Handle remote stream
+      pc.ontrack = (event) => {
+        console.log('📥 Remote stream from:', peerId);
+        setRemoteStreams((prev) => {
+          const updated = new Map(prev);
+          updated.set(peerId, event.streams[0]);
+          return updated;
+        });
+      };
+
+      // ICE candidate handling (send to backend)
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          sendSignalingMessage({
+            type: 'ice_candidate',
+            target_id: peerId,
+            candidate: event.candidate,
+            from_id: userId,
+          });
+        }
+      };
+
+      // Handle disconnects
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+          console.log(`❌ Peer ${peerId} disconnected`);
+          setRemoteStreams((prev) => {
+            const updated = new Map(prev);
+            updated.delete(peerId);
+            return updated;
+          });
+        }
+      };
+
+      peerConnectionsRef.current.set(peerId, pc);
+      WebRTCService.peerConnections.set(peerId, pc); // keep global state synced
+      return pc;
+    },
+    [sendSignalingMessage, userId]
+  );
+
+  // ✅ Handle signaling messages received from the WebSocket
+  const handleSignalingMessage = useCallback(
+    async (data) => {
+      const { type, sdp, candidate, from_id } = data;
+
+      switch (type) {
+        case 'webrtc_offer': {
+          console.log('📨 Received offer from', from_id);
+          const pc = createPeerConnection(from_id);
+          await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp }));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+
+          sendSignalingMessage({
+            type: 'webrtc_answer',
+            target_id: from_id,
+            sdp: answer.sdp,
+            from_id: userId,
+          });
+          break;
+        }
+
+        case 'webrtc_answer': {
+          console.log('📨 Received answer from', from_id);
+          const pc = peerConnectionsRef.current.get(from_id);
+          if (pc) {
+            await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp }));
+          }
+          break;
+        }
+
+        case 'ice_candidate': {
+          const pc = peerConnectionsRef.current.get(from_id);
+          if (pc && candidate) {
+            await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            console.log('🧊 Added ICE candidate from', from_id);
+          }
+          break;
+        }
+
+        case 'new_participant': {
+          console.log('👋 New participant joined:', data.user_id);
+          const pc = createPeerConnection(data.user_id);
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+
+          sendSignalingMessage({
+            type: 'webrtc_offer',
+            target_id: data.user_id,
+            sdp: offer.sdp,
+            from_id: userId,
+          });
+          break;
+        }
+
+        default:
+          break;
+      }
+    },
+    [createPeerConnection, sendSignalingMessage, userId]
+  );
+  const startScreenShare = useCallback(async () => {
+    try {
+      const stream = await WebRTCService.startScreenShare();
+      setLocalStream(stream); // show it in your local preview
+    } catch (err) {
+      console.error("❌ Failed to start screen share:", err);
+    }
   }, []);
 
-  // Cleanup on unmount
+  const stopScreenShare = useCallback(() => {
+    WebRTCService.stopScreenShare();
+    setLocalStream(WebRTCService.localStream); // revert to camera
+  }, []);
+
+  // ✅ Cleanup all connections & streams
   useEffect(() => {
     return () => {
-      stopLocalMedia();
+      WebRTCService.closeAllConnections();
+      peerConnectionsRef.current.clear();
+      setRemoteStreams(new Map());
+      console.log('🧹 Cleaned up WebRTC connections');
     };
-  }, [stopLocalMedia]);
+  }, []);
 
   return {
     localStream,
@@ -183,6 +204,8 @@ export const useWebRTC = (roomId, userId) => {
     stopLocalMedia,
     toggleVideo,
     toggleAudio,
-    createPeerConnection,
+    handleSignalingMessage,
+    startScreenShare, 
+  stopScreenShare, 
   };
 };

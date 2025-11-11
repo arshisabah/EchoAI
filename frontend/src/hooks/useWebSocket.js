@@ -9,6 +9,8 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
     const [isConnected, setIsConnected] = useState(false);
     const [transcripts, setTranscripts] = useState([]);
     const [participants, setParticipants] = useState([]);
+    const [activeSpeakerId, setActiveSpeakerId] = useState(null);
+
     const [chatMessages, setChatMessages] = useState([]);
     const [error, setError] = useState(null);
     const [lastMessage, setLastMessage] = useState(null);
@@ -19,7 +21,8 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
     const reconnectAttempts = useRef(0);
     const isConnectingRef = useRef(false);
 
-    const connect = useCallback(() => {
+    const connect = useCallback((options = {}) => {
+        const { onSignalingMessage } = options;
         // Prevent multiple simultaneous connection attempts
         if (isConnectingRef.current || wsRef.current?.readyState === WebSocket.OPEN) {
             return;
@@ -99,11 +102,21 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
                                             ...p,
                                             is_speaking: data.is_speaking ?? p.is_speaking,
                                             is_muted: data.is_muted ?? p.is_muted,
+                                            is_video_on: data.is_video_on ?? p.is_video_on,
+                                            is_audio_on: data.is_audio_on ?? p.is_audio_on,
                                             emotion_state: data.emotion_state ?? p.emotion_state
                                         }
                                         : p
                                 )
                             );
+                            break;
+                        case 'active_speaker':
+                            setActiveSpeakerId(data.user_id);
+                            break;
+
+                        case 'ping_timeout':
+                            console.log('💓 Ping timeout — sending heartbeat back');
+                            wsRef.current?.send(JSON.stringify({ type: 'ping' }));
                             break;
 
                         case 'chat_message':
@@ -125,6 +138,16 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
                             setError(data.message);
                             break;
 
+                        case 'listening':
+                            console.log(`🎧 Listening... buffered ${data.buffered_duration}s`);
+                            break;
+
+                        case 'new_participant':
+                        case 'webrtc_offer':
+                        case 'webrtc_answer':
+                        case 'ice_candidate':
+                            if (onSignalingMessage) onSignalingMessage(data);
+                            break;
                         default:
                             console.log('📨 Unknown message type:', data.type, data);
                     }
@@ -157,7 +180,7 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
                     console.log(`🔄 Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${MAX_RECONNECT_ATTEMPTS})`);
 
                     reconnectTimeoutRef.current = setTimeout(() => {
-                        connect();
+                        connect({ onSignalingMessage }); // preserve handler during reconnects
                     }, delay);
                 } else if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
                     setError('Failed to connect after multiple attempts. Please refresh the page.');
@@ -219,6 +242,9 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
             message: messageText,
         });
     }, [sendMessage]);
+    const sendSignalingMessage = useCallback((message) => {
+        return sendMessage(message);
+    }, [sendMessage]);
 
     // Connect on mount
     // Do not auto-connect on mount — we will connect manually from MeetingRoom.jsx
@@ -233,12 +259,14 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
         isConnected,
         transcripts,
         participants,
+        activeSpeakerId,
         chatMessages,
         error,
         lastMessage,
         connect,
         disconnect,
         sendMessage,
+        sendSignalingMessage,
         sendAudioChunk,
         sendChatMessage,
     };

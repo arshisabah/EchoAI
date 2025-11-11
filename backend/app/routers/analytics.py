@@ -15,7 +15,7 @@ from app.services.emotion_analysis import get_emotion_service, analyze_transcrip
 from app.services.speaker_identification_service import get_speaker_service
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/analytics", tags=["analytics"])
+router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
 @router.get("/session/{session_id}")
@@ -278,7 +278,7 @@ async def compare_sessions(session_ids: List[str] = Query(...)):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/sessions/list")
+@router.get("/sessions")
 async def list_all_sessions():
     """List all available sessions with basic stats."""
     try:
@@ -305,6 +305,10 @@ async def list_all_sessions():
         logger.error(f"List sessions error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+@router.get("/{session_id}")
+async def get_basic_or_detailed_analytics(session_id: str):
+    """Alias route for frontend analytics dashboard"""
+    return await get_detailed_analytics(session_id)
 
 def calculate_conversation_metrics(transcript_entries: List) -> Dict[str, Any]:
     """Calculate conversation flow metrics."""

@@ -12,6 +12,10 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 import torch
 import numpy as np
+import io
+import soundfile as sf
+import tempfile
+import librosa
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +53,7 @@ class TranscriptionService:
             import whisperx
             logger.info("Loading WhisperX model...")
             self.model = whisperx.load_model(
-                "base", 
+                "small", 
                 device=self.device, 
                 compute_type="float32" if self.device == "cpu" else "float16"
             )
@@ -63,7 +67,7 @@ class TranscriptionService:
         try:
             import whisper
             logger.info("Loading standard Whisper model...")
-            self.model = whisper.load_model("base", device=self.device)
+            self.model = whisper.load_model("small", device=self.device)
             self.model_type = "whisper"
             logger.info(f"✅ Standard Whisper loaded on {self.device}")
             return
@@ -80,6 +84,19 @@ class TranscriptionService:
     ) -> List[ASRResult]:
         """Transcribe audio chunk and return results."""
         
+        # --- Preprocess audio array ---
+        if audio_array.ndim > 1:  # Stereo → mono
+            audio_array = np.mean(audio_array, axis=1)
+
+        # Normalize amplitude to [-1, 1]
+        audio_array = audio_array / (np.max(np.abs(audio_array)) + 1e-6)
+
+        # Skip silence chunks (mean energy too low)
+        if np.abs(audio_array).mean() < 0.005:
+            logger.debug("Silence detected; skipping chunk.")
+            return []
+
+
         if len(audio_array) == 0:
             return []
 
@@ -237,23 +254,47 @@ async def process_audio_chunk(
     sample_rate: int = 16000
 ) -> List[Dict[str, Any]]:
     """
-    High-level function to process audio chunk.
+    High-level function to process incoming audio chunks robustly.
+    Supports PCM, WAV, and WebM (via auto-decoding).
     Returns list of transcript entries.
     """
     from app.services.audio_utils import bytes_to_numpy
-    
+
     try:
-        # Convert bytes to numpy
-        audio_array, actual_sr = bytes_to_numpy(audio_bytes, sample_rate)
-        
-        if len(audio_array) == 0:
+        # 1. Basic validation
+        if not audio_bytes or len(audio_bytes) < 100:
+            logger.warning("Empty or invalid audio chunk received.")
             return []
 
-        # Transcribe
+        # 2. Try decoding with SoundFile first (handles WAV, FLAC, OGG, WEBM/OPUS)
+        audio_array, actual_sr = None, sample_rate
+        try:
+            audio_io = io.BytesIO(audio_bytes)
+            audio_array, actual_sr = sf.read(audio_io, dtype="float32", always_2d=False)
+            if audio_array.ndim > 1:  # Convert stereo → mono
+                audio_array = np.mean(audio_array, axis=1)
+        except Exception:
+            logger.debug("SoundFile decoding failed; using fallback converter.")
+            audio_array, actual_sr = bytes_to_numpy(audio_bytes, sample_rate)
+
+        # 3. Resample if needed
+        if actual_sr != 16000:
+            try:
+                audio_array = librosa.resample(audio_array, orig_sr=actual_sr, target_sr=16000)
+                actual_sr = 16000
+            except Exception as e:
+                logger.warning(f"Resample failed: {e}")
+
+        # 4. Silence / empty check
+        if len(audio_array) == 0 or np.abs(audio_array).mean() < 0.005:
+            logger.debug("Silence detected or empty waveform; skipping.")
+            return []
+
+        # 5. Transcribe
         service = get_transcription_service()
         segments = await service.transcribe_chunk(audio_array, session_id, actual_sr)
 
-        # Convert to dict format
+        # 6. Format results
         processed_entries = []
         for seg in segments:
             if not seg.text.strip():
@@ -268,11 +309,14 @@ async def process_audio_chunk(
                 "confidence": float(seg.confidence),
                 "word_count": len(seg.text.split()),
                 "processing_time_ms": float(seg.processing_time_ms),
-                "words": seg.words
+                "words": seg.words,
             })
+
+        if not processed_entries:
+            logger.debug(f"No transcriptions generated for session {session_id}.")
 
         return processed_entries
 
     except Exception as e:
-        logger.error(f"Error processing audio chunk: {e}")
+        logger.error(f"Error processing audio chunk: {e}", exc_info=True)
         return []

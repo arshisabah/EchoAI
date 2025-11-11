@@ -1,17 +1,20 @@
 import React, { useEffect, useRef } from 'react';
 import { Mic, MicOff, Video as VideoIcon, VideoOff, User } from 'lucide-react';
 
-const VideoTile = ({ stream, username, userId, isLocal, isMuted, isVideoOff }) => {
+
+const VideoTile = ({ stream, username, userId, isLocal, isMuted, isVideoOff, isActiveSpeaker }) => {
   const videoRef = useRef(null);
 
   useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
+    if (videoRef.current && stream && stream instanceof MediaStream) {
+      if (videoRef.current.srcObject !== stream) {
+        videoRef.current.srcObject = stream;
+      }
     }
   }, [stream]);
 
   return (
-    <div className={`video-tile ${isLocal ? 'local' : 'remote'}`}>
+    <div className={`video-tile ${isLocal ? 'local' : 'remote'} ${isActiveSpeaker ? 'active-speaker' : ''}`}>
       {stream && !isVideoOff ? (
         <video
           ref={videoRef}
@@ -27,7 +30,7 @@ const VideoTile = ({ stream, username, userId, isLocal, isMuted, isVideoOff }) =
           </div>
         </div>
       )}
-      
+
       <div className="video-overlay">
         <span className="username">{isLocal ? 'You' : username}</span>
         <div className="video-controls">
@@ -43,44 +46,52 @@ const VideoTile = ({ stream, username, userId, isLocal, isMuted, isVideoOff }) =
   );
 };
 
-const VideoGrid = ({ 
-  localStream, 
-  remoteStreams, 
-  participants, 
+const VideoGrid = ({
+  localStream,
+  remoteStreams,
+  participants,
   currentUserId,
   isLocalVideoEnabled,
-  isLocalAudioEnabled 
+  isLocalAudioEnabled,
+  activeSpeakerId
 }) => {
-  const participantCount = participants.length;
+  // Combine local + remote participants
+  const combinedParticipants = [
+    {
+      user_id: currentUserId,
+      username: 'You',
+      stream: localStream,
+      isLocal: true,
+      isMuted: !isLocalAudioEnabled,
+      isVideoOff: !isLocalVideoEnabled,
+    },
+    ...participants.map((p) => ({
+      ...p,
+      isLocal: false,
+      stream: remoteStreams.get(p.user_id),
+      isVideoOff: !p.is_video_on,
+      isMuted: !p.is_audio_on,
+    })),
+  ];
+
+  const participantCount = combinedParticipants.length;
   const gridClass = `video-grid grid-${Math.min(participantCount, 4)}`;
 
   return (
     <div className={gridClass}>
-      {/* Local Video */}
-      <VideoTile
-        stream={localStream}
-        username="You"
-        userId={currentUserId}
-        isLocal={true}
-        isMuted={!isLocalAudioEnabled}
-        isVideoOff={!isLocalVideoEnabled}
-      />
+      {combinedParticipants.map((p) => (
+        <VideoTile
+          key={p.user_id}
+          stream={p.stream}
+          username={p.username}
+          userId={p.user_id}
+          isLocal={p.isLocal}
+          isMuted={p.isMuted}
+          isVideoOff={p.isVideoOff}
+          isActiveSpeaker={activeSpeakerId === p.user_id}
+        />
+      ))}
 
-      {/* Remote Videos */}
-      {Array.from(remoteStreams.entries()).map(([userId, stream]) => {
-        const participant = participants.find(p => p.user_id === userId);
-        return (
-          <VideoTile
-            key={userId}
-            stream={stream}
-            username={participant?.username || 'Guest'}
-            userId={userId}
-            isLocal={false}
-            isMuted={participant?.is_muted}
-            isVideoOff={false}
-          />
-        );
-      })}
 
       {/* Placeholder tiles for empty slots */}
       {participants.length < 4 && [...Array(4 - participantCount)].map((_, i) => (

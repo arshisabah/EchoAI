@@ -38,12 +38,14 @@ class Participant:
     username: str
     role: ParticipantRole
     joined_at: datetime
-    websocket: Any  # WebSocket connection
+    websocket: Any
     is_speaking: bool = False
     is_muted: bool = False
     total_speaking_time: float = 0.0
     emotion_state: str = "neutral"
     last_activity: datetime = None
+    is_video_on: bool = False        # 🔹 NEW
+    is_audio_on: bool = True         # 🔹 NEW
     
     def to_dict(self):
         """Convert to dictionary (exclude websocket)."""
@@ -184,9 +186,15 @@ class MeetingRoomManager:
             if len(room.participants) >= room.max_participants:
                 raise ValueError("Room is full")
             
-            # Check if user already in room
+            # Close existing connection if user already in room
             if user_id in room.participants:
-                raise ValueError(f"User {user_id} already in room")
+                old = room.participants[user_id]
+                try:
+                    await old.websocket.close()
+                    logger.info(f"Closed old connection for user {username} ({user_id}) in room {room_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to close old websocket for {user_id}: {e}")
+                room.participants.pop(user_id)
             
             # Create participant
             participant = Participant(
@@ -197,25 +205,28 @@ class MeetingRoomManager:
                 websocket=websocket,
                 last_activity=datetime.utcnow()
             )
-            
-            room.participants[user_id] = participant
-            
-            # Start room if this is the first participant
-            if len(room.participants) == 1 and room.status == MeetingStatus.WAITING:
-                room.status = MeetingStatus.ACTIVE
+        
             
             logger.info(f"User {username} ({user_id}) joined room {room_id}")
             
             # Broadcast join event to all participants
+            # Add participant to room first
+            room.participants[user_id] = participant
+            # Start room if this is the first participant
+            if len(room.participants) == 0 and room.status == MeetingStatus.WAITING:
+                room.status = MeetingStatus.ACTIVE
+
+            # Then broadcast join event with updated counts
             await self.broadcast_to_room(room_id, {
                 "type": "participant_joined",
                 "user_id": user_id,
                 "username": username,
                 "role": role.value,
+                "participant_count": len(room.participants),
                 "timestamp": datetime.utcnow().isoformat(),
-                "participant_count": len(room.participants)
+                "participants": [p.to_dict() for p in room.participants.values()]
             }, exclude_user_id=user_id)
-            
+                        
             return participant
     
     async def leave_room(self, room_id: str, user_id: str):
@@ -229,21 +240,41 @@ class MeetingRoomManager:
             participant = room.participants.pop(user_id, None)
             
             if participant:
+                participant.last_activity = datetime.utcnow()
+
+
+            if participant:
                 logger.info(f"User {participant.username} left room {room_id}")
                 
-                # Broadcast leave event
+                # ✅ Close the participant's WebSocket connection
+                try:
+                    await participant.websocket.close()
+                    logger.info(f"Closed WebSocket for {participant.username} ({user_id})")
+                except Exception as e:
+                    logger.warning(f"Error closing WebSocket for {user_id}: {e}")
+
+                # ✅ Broadcast updated leave event
                 await self.broadcast_to_room(room_id, {
                     "type": "participant_left",
                     "user_id": user_id,
                     "username": participant.username,
                     "timestamp": datetime.utcnow().isoformat(),
-                    "participant_count": len(room.participants)
+                    "participant_count": len(room.participants),
+                    "participants": [p.to_dict() for p in room.participants.values()],
+                    "room_status": room.status.value
                 })
                 
-                # End room if empty
-                if len(room.participants) == 0:
-                    room.status = MeetingStatus.ENDED
-                    logger.info(f"Room {room_id} ended (empty)")
+                # ✅ End room if empty
+            if len(room.participants) == 0:
+                room.status = MeetingStatus.ENDED
+                logger.info(f"Room {room_id} ended (empty)")
+                
+                # Notify frontend that room ended
+                await self.broadcast_to_room(room_id, {
+                    "type": "room_ended",
+                    "room_id": room_id,
+                    "timestamp": datetime.utcnow().isoformat()
+                })
     
     async def broadcast_to_room(
         self,
@@ -283,6 +314,7 @@ class MeetingRoomManager:
             
             try:
                 await participant.websocket.send_json(message)
+                participant.last_activity = datetime.utcnow() 
             except Exception as e:
                 logger.warning(f"Failed to send to {user_id}: {e}")
                 dead_connections.append(user_id)
@@ -290,7 +322,10 @@ class MeetingRoomManager:
         # Clean up dead connections
         for user_id in dead_connections:
             await self.leave_room(room_id, user_id)
-    
+        # 🔹 Auto-remove empty rooms to save memory
+        if not room.participants:
+            self.rooms.pop(room_id, None)
+            logger.info(f"🧹 Cleaned up empty room {room_id}")
     async def broadcast_transcript(
         self,
         room_id: str,
@@ -333,33 +368,46 @@ class MeetingRoomManager:
             participant.emotion_state = emotion
             participant.is_speaking = True
             participant.last_activity = datetime.utcnow()
-    
+            # 🔹 Roughly estimate speaking duration (assuming 2.5 words/sec)
+            participant.total_speaking_time += len(text.split()) / 2.5
+        # 🔹 Notify all clients who the active speaker is
+        await self.broadcast_to_room(room_id, {
+            "type": "active_speaker",
+            "user_id": user_id,
+            "username": username,
+            "timestamp": datetime.utcnow().isoformat()
+        })
     async def update_participant_state(
-        self,
-        room_id: str,
-        user_id: str,
-        is_speaking: bool = None,
-        is_muted: bool = None,
-        emotion_state: str = None
+            self,
+            room_id: str,
+            user_id: str,
+            is_speaking: bool = None,
+            is_muted: bool = None,
+            emotion_state: str = None,
+            is_video_on: bool = None,      # 🔹 New
+            is_audio_on: bool = None       # 🔹 New
     ):
         """Update participant state and broadcast to room."""
         room = self.rooms.get(room_id)
-        
         if not room or user_id not in room.participants:
             return
-        
+
         participant = room.participants[user_id]
-        
+
         if is_speaking is not None:
             participant.is_speaking = is_speaking
         if is_muted is not None:
             participant.is_muted = is_muted
         if emotion_state is not None:
             participant.emotion_state = emotion_state
-        
+        if is_video_on is not None:
+            participant.is_video_on = is_video_on
+        if is_audio_on is not None:
+            participant.is_audio_on = is_audio_on
+
         participant.last_activity = datetime.utcnow()
-        
-        # Broadcast state update
+
+        # ✅ Broadcast state update
         await self.broadcast_to_room(room_id, {
             "type": "participant_state_update",
             "user_id": user_id,
@@ -367,8 +415,11 @@ class MeetingRoomManager:
             "is_speaking": participant.is_speaking,
             "is_muted": participant.is_muted,
             "emotion_state": participant.emotion_state,
+            "is_video_on": participant.is_video_on,   # 🔹 New
+            "is_audio_on": participant.is_audio_on,   # 🔹 New
             "timestamp": datetime.utcnow().isoformat()
         })
+
     
     async def get_room_info(self, room_id: str) -> Optional[Dict[str, Any]]:
         """Get room information."""

@@ -1,14 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import Navbar from './components/Navbar';
 import Login from './components/Auth/Login';
-import Dashboard from './components/Dashboard';
-import MeetingRoom from './components/MeetingRoom';
-import AnalyticsDashboard from './components/AnalyticsDashboard';
+
+import { useBackendStatus } from './hooks/useBackendStatus';
 import { healthAPI } from './services/api';
 import './App.css';
+
+
+const Dashboard = lazy(() => import('./components/Dashboard'));
+const MeetingRoom = lazy(() => import('./components/MeetingRoom'));
+const AnalyticsDashboard = lazy(() => import('./components/AnalyticsDashboard'));
+
 
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -31,76 +36,63 @@ const ProtectedRoute = ({ children }) => {
 
 const AppContent = () => {
   const { user, logout } = useAuth();
-  const [backendStatus, setBackendStatus] = useState('checking');
-
-  useEffect(() => {
-    checkBackendHealth();
-    const interval = setInterval(checkBackendHealth, 30000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const checkBackendHealth = async () => {
-    try {
-      const health = await healthAPI.checkHealth();
-      setBackendStatus(health.status === 'healthy' ? 'connected' : 'degraded');
-    } catch (error) {
-      console.error('❌ Backend health check failed:', error);
-      setBackendStatus('disconnected');
-    }
-  };
+  const { backendStatus, checkBackendHealth } = useBackendStatus();
 
   return (
     <ErrorBoundary>
       <Router>
         <div className="app">
           {user && (
-            <Navbar 
-              backendStatus={backendStatus} 
+            <Navbar
+              backendStatus={backendStatus}
               userInfo={user}
               onLogout={logout}
             />
           )}
-          
+
           <main className="app-main">
-            <Routes>
-              <Route path="/login" element={<Login />} />
-              <Route
-                path="/"
-                element={
-                  <ProtectedRoute>
-                    <Dashboard userInfo={user} />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/meeting/:roomId"
-                element={
-                  <ProtectedRoute>
-                    <MeetingRoom userInfo={user} />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/analytics"
-                element={
-                  <ProtectedRoute>
-                    <AnalyticsDashboard />
-                  </ProtectedRoute>
-                }
-              />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
+            <Suspense fallback={<div className="app-loading">Loading...</div>}>
+              <Routes>
+                <Route path="/login" element={<Login />} />
+                <Route
+                  path="/"
+                  element={
+                    <ProtectedRoute>
+                      <Dashboard userInfo={user} />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/meeting/:roomId"
+                  element={
+                    <ProtectedRoute>
+                      <MeetingRoom userInfo={user} />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/analytics"
+                  element={
+                    <ProtectedRoute>
+                      <AnalyticsDashboard />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </Suspense>
           </main>
 
           {backendStatus === 'disconnected' && user && (
             <div className="backend-status-alert">
               <span>⚠️ Backend disconnected. Attempting to reconnect...</span>
+              <div className="loading-spinner small"></div>
               <button onClick={checkBackendHealth}>Retry</button>
             </div>
           )}
         </div>
       </Router>
-    </ErrorBoundary>
+    </ErrorBoundary >
   );
 };
 

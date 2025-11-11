@@ -288,6 +288,7 @@ body {
   overflow: hidden;
 }
 
+/* ===== Top Bar ===== */
 .meeting-top-bar {
   display: flex;
   justify-content: space-between;
@@ -330,6 +331,7 @@ body {
   color: #475569;
 }
 
+/* ===== Controls ===== */
 .meeting-controls {
   display: flex;
   gap: 0.75rem;
@@ -347,7 +349,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  transition: all 0.2s ease;
   position: relative;
 }
 
@@ -364,6 +366,7 @@ body {
   background: #10b981;
 }
 
+/* Recording indicator animation */
 .recording-indicator {
   position: absolute;
   top: -4px;
@@ -402,7 +405,7 @@ body {
   align-items: center;
   gap: 0.5rem;
   font-weight: 600;
-  transition: all 0.2s;
+  transition: all 0.2s ease;
 }
 
 .btn-control-danger:hover {
@@ -410,10 +413,10 @@ body {
   transform: scale(1.05);
 }
 
+/* ===== Layout ===== */
 .meeting-content {
   display: grid;
   grid-template-columns: 1fr 400px;
-  gap: 0;
   flex: 1;
   overflow: hidden;
 }
@@ -424,51 +427,134 @@ body {
 .meeting-video-section {
   background: #0f172a;
   padding: 1rem;
-  overflow: hidden;
-}
-
-.video-grid {
-  display: grid;
-  gap: 1rem;
   height: 100%;
+  overflow-y: auto;
 }
 
-.grid-1 {
-  grid-template-columns: 1fr;
+/* Speaker highlight */
+.video-tile.active-speaker {
+  border: 2px solid #facc15;
+  box-shadow: 0 0 12px #facc1560;
 }
 
-.grid-2 {
-  grid-template-columns: repeat(2, 1fr);
-}
-
-.grid-3,
-.grid-4 {
-  grid-template-columns: repeat(2, 1fr);
-  grid-template-rows: repeat(2, 1fr);
-}
-
-.video-tile {
+/* ===== Main and Side Video Tiles (for speaker/screen mode) ===== */
+.main-video {
+  flex: 3;
   position: relative;
-  background: #1e293b;
-  border-radius: 1rem;
+  background: #000;
+  border-radius: 10px;
   overflow: hidden;
-  aspect-ratio: 16/9;
 }
 
-.video-tile.local {
-  border: 2px solid #3b82f6;
-}
-
-.video-tile.empty {
-  border: 2px dashed #334155;
-}
-
-.video-element {
+.main-video-element {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
+.main-username {
+  position: absolute;
+  bottom: 8px;
+  left: 12px;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: white;
+  font-size: 0.9rem;
+}
+
+.side-videos {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow-y: auto;
+}
+
+.side-video-tile {
+  background: #111;
+  border-radius: 8px;
+  overflow: hidden;
+  height: 33%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.side-video-tile video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* ===== Unified Grid Layout ===== */
+.video-grid {
+  display: grid;
+  gap: 1rem;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  transition: all 0.3s ease;
+}
+
+/* Dynamic columns based on participant count */
+.video-grid.grid-1 {
+  grid-template-columns: 1fr;
+}
+
+.video-grid.grid-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.video-grid.grid-3,
+.video-grid.grid-4 {
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+}
+
+/* Large screens: 3-column view */
+@media (min-width: 1600px) {
+  .video-grid.grid-4 {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* ===== Video Tile ===== */
+.video-tile {
+  position: relative;
+  background: #1e293b;
+  border-radius: 1rem;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: transform 0.2s ease, border 0.2s ease;
+}
+
+.video-tile:hover {
+  transform: scale(1.02);
+}
+
+.video-tile.local {
+  border: 2px solid #3b82f6;
+  box-shadow: 0 0 10px #3b82f655;
+}
+
+.video-tile.empty {
+  border: 2px dashed #334155;
+  opacity: 0.8;
+}
+
+/* Video stream inside tile */
+.video-element {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
+/* Placeholder (no video) */
 .video-placeholder {
   width: 100%;
   height: 100%;
@@ -476,8 +562,9 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1rem;
-  color: #64748b;
+  color: #94a3b8;
+  text-align: center;
+  gap: 0.5rem;
 }
 
 .avatar-large {
@@ -486,37 +573,35 @@ body {
   border-radius: 50%;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
+  font-size: 2rem;
+  font-weight: 600;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 2rem;
-  font-weight: 600;
 }
 
-.placeholder-icon {
-  opacity: 0.5;
-}
-
+/* Overlay for username and mic/video icons */
 .video-overlay {
   position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
-  padding: 1rem;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.7), transparent);
+  padding: 0.75rem 1rem;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.6), transparent);
   display: flex;
   justify-content: space-between;
   align-items: center;
+  color: white;
 }
 
 .username {
-  color: white;
   font-weight: 600;
-  font-size: 0.875rem;
+  font-size: 0.9rem;
 }
 
 .video-controls {
   display: flex;
+  align-items: center;
   gap: 0.5rem;
 }
 
@@ -526,6 +611,22 @@ body {
 
 .icon-muted {
   color: #ef4444;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 1024px) {
+  .meeting-content {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .video-grid {
+    grid-template-columns: 1fr;
+  }
+  .video-tile {
+    aspect-ratio: 4 / 3;
+  }
 }
 
 /* ============================================
@@ -869,6 +970,40 @@ body {
   background: #e0e7ff;
   color: #4f46e5;
 }
+.transcript-viewer {
+  padding: 1rem;
+  max-height: 500px;
+  overflow-y: auto;
+  background: #0f172a;
+  border-radius: 1rem;
+  color: white;
+}
+
+.transcript-entry {
+  border-bottom: 1px solid #1e293b;
+  padding: 0.75rem 0;
+}
+
+.transcript-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  color: #94a3b8;
+}
+
+.transcript-text {
+  margin-top: 0.25rem;
+  font-size: 1rem;
+  color: #e2e8f0;
+}
+
+.transcript-meta {
+  font-size: 0.85rem;
+  color: #94a3b8;
+  margin-top: 0.25rem;
+  display: flex;
+  justify-content: space-between;
+}
 
 /* ============================================
    EMOTION PANEL
@@ -1016,6 +1151,12 @@ body {
 
 .emotion-icon-small {
   font-size: 1rem;
+}
+.emotion-display {
+  transition: all 0.3s ease-in-out;
+}
+.emotion-name {
+  transition: color 0.3s ease-in-out;
 }
 /* ============================================
    DASHBOARD

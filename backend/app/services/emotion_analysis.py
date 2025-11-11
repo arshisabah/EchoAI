@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 import json
+from app.modules.audio_emotion_analyzer import analyze_audio_emotion
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +221,87 @@ def get_emotion_service() -> EmotionService:
         _emotion_service = EmotionService()
     return _emotion_service
 
+# ------------------------------------------------------------------------
+# 🔹 Combined Emotion Analysis (Text + Audio) — Real-Time Fusion Function
+# ------------------------------------------------------------------------
 
+async def analyze_text_and_audio_combined(
+    text: str,
+    audio_array=None,
+    sample_rate: int = 16000,
+    text_weight: float = 0.6,
+    audio_weight: float = 0.4
+) -> Dict[str, Any]:
+    """
+    Combines text-based and audio-based emotion analysis for more realistic results.
+
+    Args:
+        text (str): Transcribed text from the user's speech.
+        audio_array (np.ndarray, optional): Numpy array of audio samples.
+        sample_rate (int): Sampling rate of audio (default 16kHz).
+        text_weight (float): Weight given to text model confidence.
+        audio_weight (float): Weight given to audio model confidence.
+
+    Returns:
+        dict: {
+            'emotion': final_emotion,
+            'confidence': float,
+            'sources': {
+                'text': {...},
+                'audio': {...}
+            }
+        }
+    """
+    from app.services.dependencies import get_emotion_service
+    service = get_emotion_service()
+
+    # --- Analyze text-based emotion ---
+    text_result = await service.analyze_text(text)
+    if not text_result:
+        text_result = {"emotion": "neutral", "confidence": 0.0}
+
+    # --- Analyze audio-based emotion (optional) ---
+    audio_result = None
+    if audio_array is not None:
+        try:
+            from app.modules.audio_emotion_analyzer import analyze_audio_emotion
+            import asyncio
+            audio_result = await asyncio.to_thread(analyze_audio_emotion, audio_array, sample_rate)
+        except Exception as e:
+            logger.error(f"Audio emotion analysis failed: {e}")
+            audio_result = {"emotion": "neutral", "confidence": 0.0}
+
+    # --- If no audio available, fallback to text only ---
+    if audio_result is None:
+        return {
+            "emotion": text_result["emotion"],
+            "confidence": text_result["confidence"],
+            "sources": {"text": text_result, "audio": None}
+        }
+
+    # --- Normalize and combine ---
+    t_emo = text_result.get("emotion", "neutral")
+    t_conf = float(text_result.get("confidence", 0.0))
+    a_emo = audio_result.get("emotion", "neutral")
+    a_conf = float(audio_result.get("confidence", 0.0))
+
+    # Choose dominant emotion
+    if t_emo == a_emo:
+        final_emotion = t_emo
+    else:
+        final_emotion = a_emo if a_conf * audio_weight > t_conf * text_weight else t_emo
+
+    # Weighted confidence
+    final_confidence = round(t_conf * text_weight + a_conf * audio_weight, 3)
+
+    return {
+        "emotion": final_emotion,
+        "confidence": final_confidence,
+        "sources": {
+            "text": text_result,
+            "audio": audio_result
+        }
+    }
 # Compatibility function
 async def analyze_transcript_emotions(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Analyze emotions for transcript entries."""

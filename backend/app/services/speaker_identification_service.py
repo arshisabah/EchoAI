@@ -72,8 +72,12 @@ class SpeakerIdentificationService:
             # Try to match with existing speakers
             best_match = None
             best_similarity = 0.0
-            similarity_threshold = 0.7
-            
+            # --- Adaptive threshold: more speakers → stricter similarity requirement
+            base_threshold = 0.65
+            max_threshold = 0.85
+            num_speakers = len(session_speakers)
+            similarity_threshold = min(max_threshold, base_threshold + (num_speakers * 0.02))
+                        
             for speaker_id in session_speakers:
                 profile = self.speaker_profiles.get(speaker_id)
                 if profile and profile.audio_fingerprint is not None:
@@ -85,6 +89,10 @@ class SpeakerIdentificationService:
                     if similarity > best_similarity:
                         best_similarity = similarity
                         best_match = speaker_id
+            
+            logger.debug(
+                f"🎙️ Session={session_id} | BestMatch={best_match} | Similarity={best_similarity:.2f} | Threshold={similarity_threshold:.2f}"
+            )
             
             # If good match found, use it
             if best_match and best_similarity > similarity_threshold:

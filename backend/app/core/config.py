@@ -2,6 +2,8 @@ import os
 from typing import List, Optional
 from pydantic_settings import BaseSettings
 
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
 class Settings(BaseSettings):
     """
@@ -28,7 +30,7 @@ class Settings(BaseSettings):
     # DATABASE
     # -------------------------------------------------------------------
     SESSION_STORE_TYPE: str = os.getenv("SESSION_STORE_TYPE", "file")
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./echoai.db")
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://echoai_user:EchoAI123@localhost:5432/echoai")
 
     # -------------------------------------------------------------------
     # AI MODELS

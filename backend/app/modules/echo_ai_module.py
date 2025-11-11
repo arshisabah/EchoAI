@@ -1,3 +1,5 @@
+#this module is just for testing purpose of the models, if all the models are working fine 
+
 import os
 import torch
 import whisper
@@ -5,12 +7,11 @@ from pyannote.audio import Pipeline
 from transformers import pipeline as hf_pipeline
 from pydub import AudioSegment
 from huggingface_hub import login
+from app.core.config import settings
+HF_TOKEN = settings.HUGGING_FACE_TOKEN
 
 # ----------- CONFIG -----------
-AUDIO_FILE = "./test_modules/Conversation 2.wav"   # Path to your audio file
-
-# HuggingFace Token (replace with your actual token)
-HF_TOKEN = os.environ.get("HF_TOKEN")
+AUDIO_FILE = r"C:\Users\Parvej\Desktop\EchoAI\backend\tests\test.wav"   # Path to your audio file
 if not HF_TOKEN or not HF_TOKEN.startswith("hf_"):
     raise ValueError("⚠️ Hugging Face Token not set correctly. Please update HF_TOKEN.")
 
@@ -23,7 +24,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"✅ Using device: {DEVICE}")
 
 # Load Whisper
-whisper_model = whisper.load_model("base", device=DEVICE)
+whisper_model = whisper.load_model("small", device=DEVICE)
 
 # Load HuggingFace Emotion Classifier
 sentiment_analyzer = hf_pipeline(

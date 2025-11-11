@@ -9,7 +9,7 @@ const AUDIO_CONSTRAINTS = {
   },
 };
 
-const CHUNK_INTERVAL = 1000; // Send audio every 1 second
+const CHUNK_INTERVAL = 3000; // Send audio every 1 second
 
 export const useAudioRecorder = (onAudioData) => {
   const [isRecording, setIsRecording] = useState(false);
