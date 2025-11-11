@@ -1,9 +1,10 @@
+// Simplified WebRTC service
+// Most logic is now in useWebRTC hook for better React integration
+
 class WebRTCService {
   constructor() {
     this.localStream = null;
     this.peerConnections = new Map();
-    this.onRemoteStream = null;
-    this.onRemoveStream = null;
     
     this.configuration = {
       iceServers: [
@@ -16,23 +17,10 @@ class WebRTCService {
   async startLocalStream(audioOnly = false) {
     try {
       const constraints = audioOnly
-        ? {
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            },
-          }
+        ? { audio: true }
         : {
-            video: {
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-            },
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            },
+            video: { width: 1280, height: 720 },
+            audio: true,
           };
 
       this.localStream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -67,9 +55,7 @@ class WebRTCService {
   }
 
   closeAllConnections() {
-    this.peerConnections.forEach((pc) => {
-      pc.close();
-    });
+    this.peerConnections.forEach((pc) => pc.close());
     this.peerConnections.clear();
     this.stopLocalStream();
   }

@@ -2,39 +2,57 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const AuthContext = createContext(null);
 
+const STORAGE_KEY = 'echoai_user';
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const storedUser = localStorage.getItem('echoai_user');
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
+    // Load user from localStorage on mount
+    try {
+      const storedUser = localStorage.getItem(STORAGE_KEY);
+      if (storedUser) {
+        const parsed = JSON.parse(storedUser);
+        setUser(parsed);
+        console.log('✅ User loaded from storage:', parsed.username);
+      }
+    } catch (error) {
+      console.error('❌ Error loading user from storage:', error);
+      localStorage.removeItem(STORAGE_KEY);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   const login = (userData) => {
     const user = {
-      user_id: userData.user_id || `user_${Date.now()}`,
-      username: userData.username,
-      email: userData.email || '',
+      user_id: userData.user_id || `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      username: userData.username.trim(),
+      email: userData.email?.trim() || '',
       role: userData.role || 'participant',
       avatar: userData.avatar || userData.username.charAt(0).toUpperCase(),
+      loginTime: new Date().toISOString(),
     };
+    
     setUser(user);
-    localStorage.setItem('echoai_user', JSON.stringify(user));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
+    console.log('✅ User logged in:', user.username);
   };
 
   const logout = () => {
     setUser(null);
-    localStorage.removeItem('echoai_user');
+    localStorage.removeItem(STORAGE_KEY);
+    console.log('👋 User logged out');
   };
 
   const updateUser = (updates) => {
+    if (!user) return;
+    
     const updatedUser = { ...user, ...updates };
     setUser(updatedUser);
-    localStorage.setItem('echoai_user', JSON.stringify(updatedUser));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedUser));
+    console.log('🔄 User updated:', updatedUser.username);
   };
 
   return (

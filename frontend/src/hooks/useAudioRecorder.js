@@ -1,37 +1,47 @@
 import { useState, useRef, useCallback } from 'react';
 
+const AUDIO_CONSTRAINTS = {
+  audio: {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    sampleRate: 16000,
+  },
+};
+
+const CHUNK_INTERVAL = 1000; // Send audio every 1 second
+
 export const useAudioRecorder = (onAudioData) => {
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState(null);
   
   const mediaRecorderRef = useRef(null);
   const streamRef = useRef(null);
-  const audioContextRef = useRef(null);
 
   const startRecording = useCallback(async () => {
     try {
       setError(null);
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: 16000,
-        },
-      });
-
+      // Get user media
+      const stream = await navigator.mediaDevices.getUserMedia(AUDIO_CONSTRAINTS);
       streamRef.current = stream;
 
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm';
+      // Determine best MIME type
+      let mimeType = 'audio/webm;codecs=opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'audio/webm';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'audio/ogg;codecs=opus';
+          if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = ''; // Use default
+          }
+        }
+      }
 
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType,
-        audioBitsPerSecond: 128000,
-      });
+      console.log('🎤 Using MIME type:', mimeType || 'default');
 
+      const options = mimeType ? { mimeType } : {};
+      const mediaRecorder = new MediaRecorder(stream, options);
       mediaRecorderRef.current = mediaRecorder;
 
       mediaRecorder.ondataavailable = async (event) => {
@@ -45,35 +55,50 @@ export const useAudioRecorder = (onAudioData) => {
               onAudioData(base64Audio);
             }
           } catch (err) {
-            console.error('Error processing audio data:', err);
+            console.error('❌ Error processing audio data:', err);
           }
         }
       };
 
       mediaRecorder.onerror = (event) => {
-        console.error('MediaRecorder error:', event.error);
+        console.error('❌ MediaRecorder error:', event.error);
         setError('Recording error: ' + event.error?.message);
+        stopRecording();
       };
 
       mediaRecorder.onstop = () => {
-        console.log('MediaRecorder stopped');
+        console.log('🛑 MediaRecorder stopped');
         setIsRecording(false);
       };
 
-      mediaRecorder.start(1000);
+      mediaRecorder.start(CHUNK_INTERVAL);
       setIsRecording(true);
       console.log('✅ Recording started');
 
     } catch (err) {
-      console.error('Error starting recording:', err);
-      setError('Failed to access microphone: ' + err.message);
+      console.error('❌ Error starting recording:', err);
+      let errorMessage = 'Failed to access microphone';
+      
+      if (err.name === 'NotAllowedError') {
+        errorMessage = 'Microphone access denied. Please allow microphone access and try again.';
+      } else if (err.name === 'NotFoundError') {
+        errorMessage = 'No microphone found. Please connect a microphone and try again.';
+      } else {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
       setIsRecording(false);
     }
   }, [onAudioData]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (err) {
+        console.error('❌ Error stopping recorder:', err);
+      }
       
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());

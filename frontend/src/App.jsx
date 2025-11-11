@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import ErrorBoundary from './components/ErrorBoundary';
 import Navbar from './components/Navbar';
 import Login from './components/Auth/Login';
 import Dashboard from './components/Dashboard';
@@ -43,61 +44,63 @@ const AppContent = () => {
       const health = await healthAPI.checkHealth();
       setBackendStatus(health.status === 'healthy' ? 'connected' : 'degraded');
     } catch (error) {
-      console.error('Backend health check failed:', error);
+      console.error('❌ Backend health check failed:', error);
       setBackendStatus('disconnected');
     }
   };
 
   return (
-    <Router>
-      <div className="app">
-        {user && (
-          <Navbar 
-            backendStatus={backendStatus} 
-            userInfo={user}
-            onLogout={logout}
-          />
-        )}
-        
-        <main className="app-main">
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route
-              path="/"
-              element={
-                <ProtectedRoute>
-                  <Dashboard userInfo={user} />
-                </ProtectedRoute>
-              }
+    <ErrorBoundary>
+      <Router>
+        <div className="app">
+          {user && (
+            <Navbar 
+              backendStatus={backendStatus} 
+              userInfo={user}
+              onLogout={logout}
             />
-            <Route
-              path="/meeting/:roomId"
-              element={
-                <ProtectedRoute>
-                  <MeetingRoom userInfo={user} />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/analytics"
-              element={
-                <ProtectedRoute>
-                  <AnalyticsDashboard />
-                </ProtectedRoute>
-              }
-            />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </main>
+          )}
+          
+          <main className="app-main">
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route
+                path="/"
+                element={
+                  <ProtectedRoute>
+                    <Dashboard userInfo={user} />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/meeting/:roomId"
+                element={
+                  <ProtectedRoute>
+                    <MeetingRoom userInfo={user} />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/analytics"
+                element={
+                  <ProtectedRoute>
+                    <AnalyticsDashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </main>
 
-        {backendStatus === 'disconnected' && user && (
-          <div className="backend-status-alert">
-            <span>⚠️ Backend disconnected. Attempting to reconnect...</span>
-            <button onClick={checkBackendHealth}>Retry</button>
-          </div>
-        )}
-      </div>
-    </Router>
+          {backendStatus === 'disconnected' && user && (
+            <div className="backend-status-alert">
+              <span>⚠️ Backend disconnected. Attempting to reconnect...</span>
+              <button onClick={checkBackendHealth}>Retry</button>
+            </div>
+          )}
+        </div>
+      </Router>
+    </ErrorBoundary>
   );
 };
 

@@ -10,35 +10,47 @@ const api = axios.create({
   },
 });
 
-// Request interceptor
+// Request interceptor with error handling
 api.interceptors.request.use(
   (config) => {
-    console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`);
+    console.log(`[API] ${config.method?.toUpperCase()} ${config.url}`);
     return config;
   },
   (error) => {
-    console.error('API Request Error:', error);
+    console.error('[API] Request Error:', error);
     return Promise.reject(error);
   }
 );
 
-// Response interceptor
+// Response interceptor with better error handling
 api.interceptors.response.use(
   (response) => {
-    console.log(`API Response: ${response.status} ${response.config.url}`);
+    console.log(`[API] ${response.status} ${response.config.url}`);
     return response;
   },
   (error) => {
-    console.error('API Response Error:', error.response?.data || error.message);
-    return Promise.reject(error);
+    const message = error.response?.data?.detail || error.message || 'Unknown error';
+    console.error('[API] Response Error:', message);
+    
+    // Handle specific error codes
+    if (error.response?.status === 401) {
+      // Redirect to login if unauthorized
+      window.location.href = '/login';
+    }
+    
+    return Promise.reject(new Error(message));
   }
 );
 
 // Meeting Room API
 export const meetingAPI = {
   createRoom: async (roomId, roomData) => {
-    const response = await api.post(`/meeting/rooms/create?room_id=${roomId}`, roomData);
-    return response.data;
+    try {
+      const response = await api.post(`/meeting/rooms/create?room_id=${roomId}`, roomData);
+      return response.data;
+    } catch (error) {
+      throw new Error(`Failed to create room: ${error.message}`);
+    }
   },
 
   getRoomInfo: async (roomId) => {
@@ -52,7 +64,7 @@ export const meetingAPI = {
   },
 
   endRoom: async (roomId, endedBy) => {
-    const response = await api.delete(`/meeting/rooms/${roomId}?ended_by=${endedBy}`);
+    const response = await api.delete(`/meeting/rooms/${roomId}?ended_by=${encodeURIComponent(endedBy)}`);
     return response.data;
   },
 

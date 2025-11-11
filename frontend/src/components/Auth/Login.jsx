@@ -6,15 +6,25 @@ import { Video, User, Mail, LogIn } from 'lucide-react';
 const Login = () => {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
+  const [role, setRole] = useState('participant');
+  const [loading, setLoading] = useState(false);
+
   const { login } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (username.trim()) {
-      login({ username: username.trim(), email: email.trim() });
+    if (!username.trim()) return;
+
+    setLoading(true);
+    setTimeout(() => {
+      login({
+        username: username.trim(),
+        email: email.trim(),
+        role: role
+      });
       navigate('/');
-    }
+    }, 1000); // Simulate small delay
   };
 
   return (
@@ -56,6 +66,15 @@ const Login = () => {
               placeholder="your.email@example.com"
             />
           </div>
+
+          <div className="form-group">
+            <label>Role</label>
+            <select value={role} onChange={(e) => setRole(e.target.value)}>
+              <option value="host">Host</option>
+              <option value="participant">Participant</option>
+            </select>
+          </div>
+
 
           <button type="submit" className="btn-primary btn-block">
             <LogIn size={20} />
