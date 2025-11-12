@@ -20,8 +20,10 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
     const pingIntervalRef = useRef(null);
     const reconnectAttempts = useRef(0);
     const isConnectingRef = useRef(false);
+    const connectOptionsRef = useRef({});
 
     const connect = useCallback((options = {}) => {
+        connectOptionsRef.current = options;
         const { onSignalingMessage } = options;
         // Prevent multiple simultaneous connection attempts
         if (isConnectingRef.current || wsRef.current?.readyState === WebSocket.OPEN) {
@@ -62,7 +64,9 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
                     switch (data.type) {
                         case 'welcome':
                         case 'connected':
+                        case 'connection_ack':
                             console.log('📩 Welcome:', data.message);
+                            setIsConnected(true);
                             if (data.room_info?.participants) {
                                 setParticipants(data.room_info.participants);
                             }
@@ -180,7 +184,7 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
                     console.log(`🔄 Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${MAX_RECONNECT_ATTEMPTS})`);
 
                     reconnectTimeoutRef.current = setTimeout(() => {
-                        connect({ onSignalingMessage }); // preserve handler during reconnects
+                        connect(connectOptionsRef.current);
                     }, delay);
                 } else if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
                     setError('Failed to connect after multiple attempts. Please refresh the page.');

@@ -30,6 +30,7 @@ const MeetingRoom = ({ userInfo }) => {
     isConnected,
     transcripts,
     participants,
+    activeSpeakerId,
     chatMessages,
     error: wsError,
     lastMessage,
@@ -89,7 +90,7 @@ const MeetingRoom = ({ userInfo }) => {
       stopLocalMedia();
       disconnect();
     };
-  }, [roomInfo, password, connect, handleSignalingMessage, startLocalMedia, stopLocalMedia, disconnect]);
+  }, [roomId, password, roomInfo?.password]);
 
 
   // Track emotion history
@@ -131,11 +132,7 @@ const MeetingRoom = ({ userInfo }) => {
     // ✅ Password is now in state, the useEffect above will trigger connection
   };
 
-  // ✅ Now that password is known, connect the WebSocket
-  connect();
-};
-
-const handleExportTranscript = async () => {
+  const handleExportTranscript = async () => {
   try {
     const data = await meetingAPI.exportMeeting(roomId, 'json');
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });

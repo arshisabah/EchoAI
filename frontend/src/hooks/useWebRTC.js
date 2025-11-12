@@ -114,62 +114,80 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
     async (data) => {
       const { type, sdp, candidate, from_id } = data;
 
-      switch (type) {
-        case 'webrtc_offer': {
-          console.log('📨 Received offer from', from_id);
-          const pc = createPeerConnection(from_id);
-          await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp }));
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
+      try {
+        switch (type) {
+          case 'webrtc_offer': {
+            console.log('📨 Received offer from', from_id);
+            const pc = createPeerConnection(from_id);
+            await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp }));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
 
-          sendSignalingMessage({
-            type: 'webrtc_answer',
-            target_id: from_id,
-            sdp: answer.sdp,
-            from_id: userId,
-          });
-          break;
-        }
-
-        case 'webrtc_answer': {
-          console.log('📨 Received answer from', from_id);
-          const pc = peerConnectionsRef.current.get(from_id);
-          if (pc) {
-            await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp }));
+            sendSignalingMessage({
+              type: 'webrtc_answer',
+              target_id: from_id,
+              sdp: answer.sdp,
+              from_id: userId,
+            });
+            break;
           }
-          break;
-        }
 
-        case 'ice_candidate': {
-          const pc = peerConnectionsRef.current.get(from_id);
-          if (pc && candidate) {
-            await pc.addIceCandidate(new RTCIceCandidate(candidate));
-            console.log('🧊 Added ICE candidate from', from_id);
+          case 'webrtc_answer': {
+            console.log('📨 Received answer from', from_id);
+            const pc = peerConnectionsRef.current.get(from_id);
+            if (pc) {
+              await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp }));
+            }
+            break;
           }
-          break;
+
+          case 'ice_candidate': {
+            const pc = peerConnectionsRef.current.get(from_id);
+            if (pc && candidate) {
+              await pc.addIceCandidate(new RTCIceCandidate(candidate));
+              console.log('🧊 Added ICE candidate from', from_id);
+            }
+            break;
+          }
+
+          case 'new_participant': {
+            console.log('👋 New participant joined:', data.user_id);
+            const pc = createPeerConnection(data.user_id);
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+
+            sendSignalingMessage({
+              type: 'webrtc_offer',
+              target_id: data.user_id,
+              sdp: offer.sdp,
+              from_id: userId,
+            });
+            break;
+          }
+
+          default:
+            break;
         }
-
-        case 'new_participant': {
-          console.log('👋 New participant joined:', data.user_id);
-          const pc = createPeerConnection(data.user_id);
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-
-          sendSignalingMessage({
-            type: 'webrtc_offer',
-            target_id: data.user_id,
-            sdp: offer.sdp,
-            from_id: userId,
-          });
-          break;
-        }
-
-        default:
-          break;
+      } catch (error) {
+        console.error('❌ WebRTC signaling error:', error);
+        setError('WebRTC connection failed: ' + error.message);
       }
     },
     [createPeerConnection, sendSignalingMessage, userId]
   );
+  const handleParticipantLeft = useCallback((userId) => {
+    const pc = peerConnectionsRef.current.get(userId);
+    if (pc) {
+      pc.close();
+      peerConnectionsRef.current.delete(userId);
+    }
+    setRemoteStreams(prev => {
+      const updated = new Map(prev);
+      updated.delete(userId);
+      return updated;
+    });
+  }, []);
+
   const startScreenShare = useCallback(async () => {
     try {
       const stream = await WebRTCService.startScreenShare();
@@ -205,7 +223,8 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
     toggleVideo,
     toggleAudio,
     handleSignalingMessage,
+    handleParticipantLeft,
     startScreenShare, 
-  stopScreenShare, 
+    stopScreenShare, 
   };
 };
