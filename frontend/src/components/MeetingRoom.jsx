@@ -25,13 +25,31 @@ const MeetingRoom = ({ userInfo }) => {
   const [password, setPassword] = useState('');
   const [emotionHistory, setEmotionHistory] = useState([]);
 
+  // Load room info (moved above the effect that calls it)
+  const loadRoomInfo = async () => {
+    try {
+      const data = await meetingAPI.getRoomInfo(roomId);
+      setRoomInfo(data);
+
+      if (data?.password && !password) {
+        setShowPassword(true);
+      }
+    } catch (error) {
+      console.error('Error loading room:', error);
+      if (error?.response?.status === 404) {
+        alert('Room not found');
+        navigate('/');
+      }
+    }
+  };
+
   // WebSocket connection
   const {
     isConnected,
-    transcripts,
-    participants,
+    transcripts = [],
+    participants = [],
     activeSpeakerId,
-    chatMessages,
+    chatMessages = [],
     error: wsError,
     lastMessage,
     sendAudioChunk,
@@ -39,7 +57,7 @@ const MeetingRoom = ({ userInfo }) => {
     sendSignalingMessage,
     disconnect,
     connect,
-  } = useWebSocket(roomId, userInfo.user_id, userInfo.username, password);
+  } = useWebSocket(roomId, userInfo?.user_id, userInfo?.username, password);
 
   // WebRTC for video
   const {
@@ -52,7 +70,7 @@ const MeetingRoom = ({ userInfo }) => {
     toggleVideo,
     toggleAudio,
     handleSignalingMessage,
-  } = useWebRTC(roomId, userInfo.user_id, sendSignalingMessage);
+  } = useWebRTC(roomId, userInfo?.user_id, sendSignalingMessage);
 
   // Audio recording for transcription
   const {
@@ -99,23 +117,6 @@ const MeetingRoom = ({ userInfo }) => {
       setEmotionHistory(prev => [...prev, lastMessage.emotion].slice(-10));
     }
   }, [lastMessage]);
-
-  const loadRoomInfo = async () => {
-    try {
-      const data = await meetingAPI.getRoomInfo(roomId);
-      setRoomInfo(data);
-
-      if (data.password && !password) {
-        setShowPassword(true);
-      }
-    } catch (error) {
-      console.error('Error loading room:', error);
-      if (error.response?.status === 404) {
-        alert('Room not found');
-        navigate('/');
-      }
-    }
-  };
 
   const handleLeaveRoom = async () => {
     if (isRecording) {
