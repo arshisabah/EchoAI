@@ -55,17 +55,20 @@ const VideoGrid = ({
   isLocalAudioEnabled,
   activeSpeakerId
 }) => {
+  // Filter out current user from participants to avoid duplication
+  const remoteParticipants = participants.filter(p => p.user_id !== currentUserId);
+  
   // Combine local + remote participants
   const combinedParticipants = [
     {
       user_id: currentUserId,
-      username: 'You',
+      username: participants.find(p => p.user_id === currentUserId)?.username || 'You',
       stream: localStream,
       isLocal: true,
       isMuted: !isLocalAudioEnabled,
       isVideoOff: !isLocalVideoEnabled,
     },
-    ...participants.map((p) => ({
+    ...remoteParticipants.map((p) => ({
       ...p,
       isLocal: false,
       stream: remoteStreams.get(p.user_id),
@@ -94,7 +97,7 @@ const VideoGrid = ({
 
 
       {/* Placeholder tiles for empty slots */}
-      {participants.length < 4 && [...Array(4 - participantCount)].map((_, i) => (
+      {participantCount < 4 && [...Array(4 - participantCount)].map((_, i) => (
         <div key={`empty-${i}`} className="video-tile empty">
           <div className="video-placeholder">
             <User size={32} className="placeholder-icon" />

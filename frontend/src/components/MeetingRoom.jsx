@@ -30,6 +30,7 @@ const MeetingRoom = ({ userInfo }) => {
     isConnected,
     transcripts,
     participants,
+    activeSpeakerId,
     chatMessages,
     error: wsError,
     lastMessage,
@@ -89,7 +90,7 @@ const MeetingRoom = ({ userInfo }) => {
       stopLocalMedia();
       disconnect();
     };
-  }, [roomInfo, password, connect, handleSignalingMessage, startLocalMedia, stopLocalMedia, disconnect]);
+  }, [roomId, password, roomInfo?.password]); // Only depend on values, not functions
 
 
   // Track emotion history
@@ -130,10 +131,6 @@ const MeetingRoom = ({ userInfo }) => {
     setShowPassword(false);
     // ✅ Password is now in state, the useEffect above will trigger connection
   };
-
-  // ✅ Now that password is known, connect the WebSocket
-  connect();
-};
 
 const handleExportTranscript = async () => {
   try {
