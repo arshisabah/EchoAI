@@ -133,35 +133,35 @@ const MeetingRoom = ({ userInfo }) => {
   };
 
   const handleExportTranscript = async () => {
-  try {
-    const data = await meetingAPI.exportMeeting(roomId, 'json');
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `meeting_${roomId}_${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  } catch (error) {
-    console.error('Export failed:', error);
-    alert('Failed to export transcript');
-  }
-};
+    try {
+      const data = await meetingAPI.exportMeeting(roomId, 'json');
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `meeting_${roomId}_${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Export failed:', error);
+      alert('Failed to export transcript');
+    }
+  };
 
-const handleSendChat = (message) => {
-  sendChatMessage(message);
-};
+  const handleSendChat = (message) => {
+    sendChatMessage(message);
+  };
 
-const currentEmotion = lastMessage?.type === 'live_transcript'
-  ? lastMessage.emotion
-  : 'neutral';
+  const currentEmotion = lastMessage?.type === 'live_transcript'
+    ? lastMessage.emotion
+    : 'neutral';
 
-const emotionGuidance = lastMessage?.type === 'live_transcript'
-  ? lastMessage.emotion_guidance
-  : null;
+  const emotionGuidance = lastMessage?.type === 'live_transcript'
+    ? lastMessage.emotion_guidance
+    : null;
 
-// Password modal
-if (showPassword) {
+  // Password modal
+  if (showPassword) {
   return (
     <div className="password-prompt">
       <div className="password-card">
@@ -344,6 +344,6 @@ return (
     </div>
   </div>
 );
-
+};
 
 export default MeetingRoom;
