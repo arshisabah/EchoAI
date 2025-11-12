@@ -20,9 +20,11 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
     const pingIntervalRef = useRef(null);
     const reconnectAttempts = useRef(0);
     const isConnectingRef = useRef(false);
+    const connectOptionsRef = useRef({});
     const onSignalingMessageRef = useRef(null);
 
     const connect = useCallback((options = {}) => {
+        connectOptionsRef.current = options;
         const { onSignalingMessage } = options;
         // Store in ref to avoid stale closure during reconnection
         if (onSignalingMessage) {
@@ -69,6 +71,7 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
                         case 'connected':
                         case 'connection_ack':
                             console.log('📩 Welcome:', data.message);
+                            setIsConnected(true);
                             setIsConnected(true); // Explicitly set connected state
                             if (data.room_info?.participants) {
                                 setParticipants(data.room_info.participants);
@@ -187,6 +190,7 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
                     console.log(`🔄 Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${MAX_RECONNECT_ATTEMPTS})`);
 
                     reconnectTimeoutRef.current = setTimeout(() => {
+                        connect(connectOptionsRef.current);
                         connect({ onSignalingMessage: onSignalingMessageRef.current }); // preserve handler during reconnects
                     }, delay);
                 } else if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {

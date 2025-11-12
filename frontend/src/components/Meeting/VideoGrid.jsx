@@ -55,6 +55,9 @@ const VideoGrid = ({
   isLocalAudioEnabled,
   activeSpeakerId
 }) => {
+  // ✅ FIX: Filter out current user from remote participants
+  const remoteParticipants = participants.filter(p => p.user_id !== currentUserId);
+  
   // Filter out current user from participants to avoid duplication
   const remoteParticipants = participants.filter(p => p.user_id !== currentUserId);
   
@@ -65,6 +68,7 @@ const VideoGrid = ({
       username: participants.find(p => p.user_id === currentUserId)?.username || 'You',
       stream: localStream,
       isLocal: true,
+      stream: localStream,
       isMuted: !isLocalAudioEnabled,
       isVideoOff: !isLocalVideoEnabled,
     },
