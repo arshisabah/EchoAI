@@ -115,6 +115,9 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
       const { type, sdp, candidate, from_id } = data;
 
       try {
+      try {
+        const { type, sdp, candidate, from_id } = data;
+
         switch (type) {
           case 'webrtc_offer': {
             console.log('📨 Received offer from', from_id);
@@ -137,6 +140,21 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
             const pc = peerConnectionsRef.current.get(from_id);
             if (pc) {
               await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp }));
+
+          case 'webrtc_answer': {
+            console.log('📨 Received answer from', from_id);
+            const pc = peerConnectionsRef.current.get(from_id);
+            if (pc) {
+              await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp }));
+            }
+            break;
+          }
+
+          case 'ice_candidate': {
+            const pc = peerConnectionsRef.current.get(from_id);
+            if (pc && candidate) {
+              await pc.addIceCandidate(new RTCIceCandidate(candidate));
+              console.log('🧊 Added ICE candidate from', from_id);
             }
             break;
           }
@@ -161,6 +179,33 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
               target_id: data.user_id,
               sdp: offer.sdp,
               from_id: userId,
+          case 'new_participant': {
+            console.log('👋 New participant joined:', data.user_id);
+            const pc = createPeerConnection(data.user_id);
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+
+            sendSignalingMessage({
+              type: 'webrtc_offer',
+              target_id: data.user_id,
+              sdp: offer.sdp,
+              from_id: userId,
+            });
+            break;
+          }
+
+          case 'participant_left': {
+            console.log('👋 Participant left, cleaning up connection:', data.user_id);
+            const pc = peerConnectionsRef.current.get(data.user_id);
+            if (pc) {
+              pc.close();
+              peerConnectionsRef.current.delete(data.user_id);
+              WebRTCService.peerConnections.delete(data.user_id);
+            }
+            setRemoteStreams((prev) => {
+              const updated = new Map(prev);
+              updated.delete(data.user_id);
+              return updated;
             });
             break;
           }
@@ -171,6 +216,9 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
       } catch (error) {
         console.error('❌ WebRTC signaling error:', error);
         setError('WebRTC connection failed: ' + error.message);
+      } catch (err) {
+        console.error('❌ Error handling signaling message:', err, data);
+        setError(err.message);
       }
     },
     [createPeerConnection, sendSignalingMessage, userId]

@@ -239,7 +239,11 @@ const TaskPanel = ({ roomId, currentUser }) => {
                   <div className="task-due-date">
                     <Calendar size={14} />
                     <span>
-                      {new Date(task.due_date).toLocaleDateString()}
+                      {new Date(task.due_date).toLocaleDateString('en-US', { 
+                        year: 'numeric', 
+                        month: 'short', 
+                        day: 'numeric' 
+                      })}
                     </span>
                   </div>
                 )}

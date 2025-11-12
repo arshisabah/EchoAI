@@ -50,6 +50,10 @@ const MeetingRoom = ({ userInfo }) => {
     participants = [],
     activeSpeakerId,
     chatMessages = [],
+    transcripts,
+    participants,
+    activeSpeakerId,
+    chatMessages,
     error: wsError,
     lastMessage,
     sendAudioChunk,
@@ -109,6 +113,7 @@ const MeetingRoom = ({ userInfo }) => {
       disconnect();
     };
   }, [roomId, password, roomInfo?.password]);
+  }, [roomId, password, roomInfo?.password]); // Only depend on values, not functions
 
 
   // Track emotion history
@@ -148,6 +153,25 @@ const MeetingRoom = ({ userInfo }) => {
       alert('Failed to export transcript');
     }
   };
+const handleExportTranscript = async () => {
+  try {
+    const data = await meetingAPI.exportMeeting(roomId, 'json');
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `meeting_${roomId}_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('Export failed:', error);
+    alert('Failed to export transcript');
+  }
+};
+
+const handleSendChat = (message) => {
+  sendChatMessage(message);
+};
 
   const handleSendChat = (message) => {
     sendChatMessage(message);
