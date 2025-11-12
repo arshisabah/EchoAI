@@ -262,8 +262,16 @@ if __name__ == "__main__":
 
 
 # 🔹 Add this new route
+# Line 265-269 in app/main.py
 @app.get("/test")
 def serve_test():
-    # Get the path to test.html (assuming it's in backend/)
     file_path = os.path.join(os.path.dirname(__file__), "../test.html")
-    return FileResponse(file_path)
+    # ✅ Add no-cache headers
+    return FileResponse(
+        file_path,
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+    )

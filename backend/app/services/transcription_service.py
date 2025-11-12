@@ -53,7 +53,7 @@ class TranscriptionService:
             import whisperx
             logger.info("Loading WhisperX model...")
             self.model = whisperx.load_model(
-                "small", 
+                "tiny", 
                 device=self.device, 
                 compute_type="float32" if self.device == "cpu" else "float16"
             )

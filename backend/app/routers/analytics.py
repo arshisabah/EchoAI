@@ -15,7 +15,7 @@ from app.services.emotion_analysis import get_emotion_service, analyze_transcrip
 from app.services.speaker_identification_service import get_speaker_service
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/analytics", tags=["analytics"])
+router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 
 @router.get("/session/{session_id}")

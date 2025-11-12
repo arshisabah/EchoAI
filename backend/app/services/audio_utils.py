@@ -13,45 +13,52 @@ from typing import Tuple
 logger = logging.getLogger(__name__)
 
 
-def bytes_to_numpy(audio_bytes: bytes, sample_rate: int = 16000) -> Tuple[np.ndarray, int]:
+def bytes_to_numpy(audio_bytes: bytes, sample_rate: int = 16000) -> np.ndarray:
     """
-    Convert audio bytes to numpy array.
-
-    Supports:
-    - WAV format
-    - Raw PCM16
-    - WebM/Opus (via pydub + ffmpeg)
+    Convert audio bytes to numpy array, handling various formats.
     """
     try:
-        # Try as WAV first
-        return _bytes_to_numpy_wav(audio_bytes, sample_rate)
+        # Try direct PCM conversion first
+        if len(audio_bytes) % 2 == 1:
+            logger.warning(f"Odd-sized audio buffer ({len(audio_bytes)} bytes), truncating last byte")
+            audio_bytes = audio_bytes[:-1]
+        
+        if len(audio_bytes) == 0:
+            logger.warning("Empty audio buffer after processing")
+            return np.array([], dtype=np.float32)
+        
+        # ✅ Try soundfile first (handles WebM/Opus)
+        try:
+            import io
+            audio_io = io.BytesIO(audio_bytes)
+            audio_array, actual_sr = sf.read(audio_io, dtype="float32", always_2d=False)
+            
+            if audio_array.ndim > 1:  # Convert stereo to mono
+                audio_array = np.mean(audio_array, axis=1)
+            
+            # Resample if needed
+            if actual_sr != sample_rate:
+                import librosa
+                audio_array = librosa.resample(audio_array, orig_sr=actual_sr, target_sr=sample_rate)
+            
+            logger.info(f"✅ Decoded audio: {len(audio_array)} samples at {sample_rate}Hz")
+            return audio_array
+            
+        except Exception as sf_error:
+            logger.debug(f"SoundFile decode failed: {sf_error}, trying raw PCM")
+            
+            # Fallback: Try raw PCM int16
+            try:
+                audio_array = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+                logger.info(f"✅ Decoded as PCM: {len(audio_array)} samples")
+                return audio_array
+            except Exception as pcm_error:
+                logger.error(f"All audio decode methods failed: {pcm_error}")
+                return np.array([], dtype=np.float32)
+    
     except Exception as e:
-        logger.debug(f"Not WAV format: {e}")
-
-    try:
-        # Try with soundfile (handles FLAC/OGG/etc.)
-        return _bytes_to_numpy_soundfile(audio_bytes, sample_rate)
-    except Exception as e:
-        logger.debug(f"Soundfile failed: {e}")
-
-    # ✅ New: WebM/Opus fallback using pydub
-    try:
-        from io import BytesIO
-        from pydub import AudioSegment
-
-        audio = AudioSegment.from_file(BytesIO(audio_bytes), format="webm")
-        audio = audio.set_channels(1).set_frame_rate(sample_rate)
-        samples = np.array(audio.get_array_of_samples()).astype(np.float32) / 32768.0
-        return samples, sample_rate
-    except Exception as e:
-        logger.debug(f"pydub WebM decode failed: {e}")
-
-    try:
-        # Final fallback: raw PCM
-        return _bytes_to_numpy_raw(audio_bytes, sample_rate)
-    except Exception as e:
-        logger.error(f"All audio conversion methods failed: {e}")
-        return np.array([], dtype=np.float32), sample_rate
+        logger.error(f"Audio conversion error: {e}")
+        return np.array([], dtype=np.float32)
 
 
 def _bytes_to_numpy_wav(audio_bytes: bytes, target_sr: int) -> Tuple[np.ndarray, int]:

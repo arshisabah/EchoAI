@@ -97,6 +97,9 @@ class OrchestratorService:
             session = self.active_sessions[session_id]
             session.last_activity = datetime.utcnow()
 
+            # Default sample rate
+            sample_rate = 16000
+
             try:
                 # Try direct decode (handles WAV, OGG, WebM, etc.)
                 audio_io = io.BytesIO(audio_bytes)
@@ -105,26 +108,47 @@ class OrchestratorService:
                 # Convert stereo → mono if needed
                 if audio_array.ndim > 1:
                     audio_array = np.mean(audio_array, axis=1)
+                    
+                logger.debug(f"✅ Decoded with soundfile: {len(audio_array)} samples at {sample_rate}Hz")
+                
             except Exception as e:
-                logger.debug(f"SoundFile decode failed, falling back: {e}")
-                from app.services.audio_utils import bytes_to_numpy
-                audio_array, sample_rate = bytes_to_numpy(audio_bytes, sample_rate=16000)
+                logger.debug(f"SoundFile decode failed, falling back to PCM: {e}")
+                
+                # ✅ FIX: bytes_to_numpy returns a tuple (audio_array, sample_rate)
+                result = bytes_to_numpy(audio_bytes, sample_rate=16000)
+                
+                # Handle both return formats
+                if isinstance(result, tuple):
+                    audio_array, sample_rate = result
+                else:
+                    # If it returns only array, use default sample rate
+                    audio_array = result
+                    sample_rate = 16000
+                
+                logger.debug(f"✅ Decoded as PCM: {len(audio_array)} samples at {sample_rate}Hz")
 
             # Ensure correct sample rate (Whisper expects 16 kHz)
             if sample_rate != 16000:
                 try:
                     audio_array = librosa.resample(audio_array, orig_sr=sample_rate, target_sr=16000)
                     sample_rate = 16000
+                    logger.debug(f"✅ Resampled to 16kHz")
                 except Exception as e:
                     logger.warning(f"Resample failed: {e}")
 
             # Skip silent or empty chunks
-            if len(audio_array) == 0 or np.abs(audio_array).mean() < 0.005:
-                logger.debug(f"Silent or empty chunk — skipping for session {session_id}")
+            if len(audio_array) == 0:
+                logger.debug(f"Empty audio chunk — skipping for session {session_id}")
+                return None
+                
+            if np.abs(audio_array).mean() < 0.005:
+                logger.debug(f"Silent chunk (mean: {np.abs(audio_array).mean():.4f}) — skipping for session {session_id}")
                 return None
 
             # Normalize amplitude
-            audio_array = audio_array / (np.max(np.abs(audio_array)) + 1e-6)
+            max_amp = np.max(np.abs(audio_array))
+            if max_amp > 0:
+                audio_array = audio_array / (max_amp + 1e-6)
 
             # Initialize buffer for session
             if session_id not in self.audio_buffers:
@@ -142,14 +166,11 @@ class OrchestratorService:
                 return None
 
             duration_sec = len(buffered_audio) / sample_rate
-            logger.debug(f"🎧 Processing {len(buffered_audio) / sample_rate:.2f}s audio for session {session_id}")
+            logger.info(f"🎧 Buffered {duration_sec:.2f}s audio for session {session_id}")
 
-            
-            
-            # Only process when ~3s of audio is buffered
-            if duration_sec < 3.0:
-                logger.debug(f"Buffered {duration_sec:.2f}s for {session_id} — waiting for more audio")
-                await asyncio.sleep(0)  # yield control for async fairness
+            # Only process when ~1.5s of audio is buffered (reduced from 3s for faster response)
+            if duration_sec < 1.5:
+                logger.debug(f"Waiting for more audio (have {duration_sec:.2f}s, need 1.5s)")
                 return {
                     "type": "listening",
                     "session_id": session_id,
@@ -161,6 +182,8 @@ class OrchestratorService:
             # Clear buffer after processing
             self.audio_buffers[session_id] = []
             audio_array = buffered_audio
+            
+            logger.info(f"🎙️ Processing {duration_sec:.2f}s of audio for transcription")
 
             # ----- TRANSCRIPTION -----
             asr_results = await self.transcription_service.transcribe_chunk(
@@ -203,6 +226,7 @@ class OrchestratorService:
                     text_weight=0.6,
                     audio_weight=0.4
                 )
+                
                 # Update stats
                 await self.speaker_service.update_speaker_statistics(
                     speaker,
@@ -229,10 +253,9 @@ class OrchestratorService:
                     "sample_rate": sample_rate
                 }
 
-                logger.debug(
-                    f"🗣️ Transcription: '{text[:60]}'... Speaker={speaker}, Emotion={emotion_result.get('emotion')}, Confidence={emotion_result.get('confidence'):.2f}"
+                logger.info(
+                    f"📝 Transcription: '{text[:60]}'... | Speaker={speaker} | Emotion={emotion_result.get('emotion')} ({emotion_result.get('confidence'):.2f})"
                 )
-
 
                 processed_entries.append(entry)
 
@@ -260,15 +283,14 @@ class OrchestratorService:
             
 
         except Exception as e:
-            logger.exception(f"Orchestrator failed to process chunk for session {session_id}: {e}")
+            logger.exception(f"❌ Orchestrator failed to process chunk for session {session_id}: {e}")
             return None
         finally:
+            # Prevent buffer overflow
             buf = self.audio_buffers.get(session_id)
             if buf and len(buf) > 100:
                 logger.warning(f"⚠️ Buffer overflow for {session_id} — truncating oldest chunks")
-                self.audio_buffers[session_id] = buf[-50:]  # keep last 50 only
-
-    
+                self.audio_buffers[session_id] = buf[-50:]
 
     async def generate_realtime_summary(self, session_id: str, last_n_entries: int = 10) -> Dict[str, Any]:
         """Generate a real-time summary of recent conversation."""
@@ -474,7 +496,6 @@ class OrchestratorService:
                 del self.active_sessions[sid]
                 self.audio_buffers.pop(sid, None)
                 logger.info(f"🧹 Cleaned inactive session {sid}")
-    
 
 
 # Singleton accessor
