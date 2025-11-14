@@ -33,7 +33,6 @@ class MeetingStatus(str, Enum):
 
 @dataclass
 class Participant:
-    """Represents a participant in a meeting."""
     user_id: str
     username: str
     role: ParticipantRole
@@ -44,16 +43,24 @@ class Participant:
     total_speaking_time: float = 0.0
     emotion_state: str = "neutral"
     last_activity: datetime = None
-    is_video_on: bool = False        # 🔹 NEW
-    is_audio_on: bool = True         # 🔹 NEW
-    
+    is_video_on: bool = False
+    is_audio_on: bool = True
+
     def to_dict(self):
-        """Convert to dictionary (exclude websocket)."""
-        data = asdict(self)
-        data.pop('websocket', None)
-        data['joined_at'] = self.joined_at.isoformat()
-        data['last_activity'] = self.last_activity.isoformat() if self.last_activity else None
-        return data
+        """SAFE serialization (no recursion, do not deepcopy websocket)."""
+        return {
+            "user_id": self.user_id,
+            "username": self.username,
+            "role": self.role.value,
+            "joined_at": self.joined_at.isoformat(),
+            "last_activity": self.last_activity.isoformat() if self.last_activity else None,
+            "is_speaking": self.is_speaking,
+            "is_muted": self.is_muted,
+            "is_video_on": self.is_video_on,
+            "is_audio_on": self.is_audio_on,
+            "total_speaking_time": self.total_speaking_time,
+            "emotion_state": self.emotion_state,
+        }
 
 
 @dataclass

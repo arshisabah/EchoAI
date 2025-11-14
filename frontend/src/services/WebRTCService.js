@@ -1,114 +1,134 @@
-// Simplified WebRTC service
-// Most logic is now in useWebRTC hook for better React integration
+// Enhanced WebRTCService.js (multi-peer safe)
+// Handles local media, toggles, screen share, track replacement
 
 class WebRTCService {
   constructor() {
     this.localStream = null;
-    this.peerConnections = new Map();
+    this.screenStream = null;
+    this.peerConnections = new Map();  // Filled from useWebRTC
 
     this.configuration = {
       iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
       ],
     };
   }
+
+  //-------------------------------------------------------
+  //  START / STOP LOCAL STREAM
+  //-------------------------------------------------------
 
   async startLocalStream(audioOnly = false) {
     try {
       const constraints = audioOnly
         ? { audio: true }
         : {
-          video: { width: 1280, height: 720 },
-          audio: true,
-        };
+            video: {
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              frameRate: { ideal: 30 },
+            },
+            audio: true,
+          };
 
       this.localStream = await navigator.mediaDevices.getUserMedia(constraints);
       return this.localStream;
     } catch (error) {
-      console.error('Error accessing media devices:', error);
+      console.error("❌ Local stream error:", error);
       throw error;
     }
   }
 
   stopLocalStream() {
     if (this.localStream) {
-      this.localStream.getTracks().forEach((track) => track.stop());
+      this.localStream.getTracks().forEach(track => track.stop());
       this.localStream = null;
     }
   }
 
+  //-------------------------------------------------------
+  //  AUDIO / VIDEO TOGGLES
+  //-------------------------------------------------------
+
   toggleAudio(enabled) {
-    if (this.localStream) {
-      this.localStream.getAudioTracks().forEach((track) => {
-        track.enabled = enabled;
-      });
-    }
+    if (!this.localStream) return;
+
+    this.localStream.getAudioTracks().forEach(track => {
+      track.enabled = enabled;
+    });
   }
 
   toggleVideo(enabled) {
+    if (!this.localStream) return;
+
+    this.localStream.getVideoTracks().forEach(track => {
+      track.enabled = enabled;
+    });
+  }
+
+  //-------------------------------------------------------
+  //  SCREEN SHARING (Multi-peer safe)
+  //-------------------------------------------------------
+
+  async startScreenShare() {
+    try {
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { cursor: "always" },
+        audio: false,
+      });
+
+      const screenTrack = screenStream.getVideoTracks()[0];
+      this.screenStream = screenStream;
+
+      // Replace video track for all connected peers
+      this.peerConnections.forEach(pc => {
+        const sender = pc.getSenders().find(s => s.track?.kind === "video");
+        if (sender) {
+          sender.replaceTrack(screenTrack);
+        }
+      });
+
+      // When user stops sharing through browser UI
+      screenTrack.onended = () => {
+        this.stopScreenShare();
+      };
+
+      return screenStream;
+    } catch (err) {
+      console.error("❌ Screen share error:", err);
+      throw err;
+    }
+  }
+
+  stopScreenShare() {
+    if (this.screenStream) {
+      this.screenStream.getTracks().forEach(t => t.stop());
+      this.screenStream = null;
+    }
+
+    // Restore camera feed
     if (this.localStream) {
-      this.localStream.getVideoTracks().forEach((track) => {
-        track.enabled = enabled;
+      const cameraTrack = this.localStream.getVideoTracks()[0];
+
+      this.peerConnections.forEach(pc => {
+        const sender = pc.getSenders().find(s => s.track?.kind === "video");
+        if (sender && cameraTrack) sender.replaceTrack(cameraTrack);
       });
     }
   }
-  //screen sharing logic but not implemented
-  
-  // async startScreenShare() {
-  //   try {
-  //     // Capture screen stream
-  //     const screenStream = await navigator.mediaDevices.getDisplayMedia({
-  //       video: { cursor: "always" },
-  //       audio: false, // most browsers block screen audio unless explicitly allowed
-  //     });
 
-  //     // Replace video track in all peer connections (so everyone sees your screen)
-  //     const screenTrack = screenStream.getVideoTracks()[0];
-  //     this.peerConnections.forEach((pc) => {
-  //       const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-  //       if (sender) {
-  //         sender.replaceTrack(screenTrack);
-  //       }
-  //     });
-
-  //     // When user stops sharing
-  //     screenTrack.onended = () => {
-  //       console.log('🛑 Screen sharing stopped');
-  //       this.stopScreenShare();
-  //     };
-
-  //     this.screenStream = screenStream;
-  //     console.log('🖥️ Screen sharing started');
-  //     return screenStream;
-  //   } catch (err) {
-  //     console.error('❌ Error starting screen share:', err);
-  //     throw err;
-  //   }
-  // }
-
-  // stopScreenShare() {
-  //   if (this.screenStream) {
-  //     this.screenStream.getTracks().forEach(track => track.stop());
-  //     this.screenStream = null;
-  //     console.log('🛑 Screen share stream closed');
-  //   }
-
-  //   // Revert back to webcam stream
-  //   if (this.localStream) {
-  //     const cameraTrack = this.localStream.getVideoTracks()[0];
-  //     this.peerConnections.forEach((pc) => {
-  //       const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-  //       if (sender && cameraTrack) {
-  //         sender.replaceTrack(cameraTrack);
-  //       }
-  //     });
-  //     console.log('🎥 Restored camera feed after screen share');
-  //   }
-  // }
+  //-------------------------------------------------------
+  //  CLOSE ALL CONNECTIONS
+  //-------------------------------------------------------
 
   closeAllConnections() {
-    this.peerConnections.forEach((pc) => pc.close());
+    this.peerConnections.forEach(pc => {
+      try {
+        pc.close();
+      } catch {}
+    });
+
     this.peerConnections.clear();
     this.stopLocalStream();
   }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff, MessageSquare,
@@ -22,24 +22,23 @@ const MeetingRoom = ({ userInfo }) => {
   const navigate = useNavigate();
   const { roomId } = useParams();
   const location = useLocation();
-  const queryParams = new URLSearchParams(location.search);
 
+  const queryParams = new URLSearchParams(location.search);
   const roomPassword = queryParams.get("password") || "";
 
-  console.log("LOADED CORRECT MEETING ROOM COMPONENT");
-  console.log("roomId from useParams:", roomId);
-
-  const [activeTab, setActiveTab] = useState('transcript');
+  const [activeTab, setActiveTab] = useState("transcript");
   const [roomInfo, setRoomInfo] = useState(null);
   const [userRole, setUserRole] = useState("participant");
-  const [currentEmotion, setCurrentEmotion] = useState('neutral');
+  const [currentEmotion, setCurrentEmotion] = useState("neutral");
   const [emotionGuidance, setEmotionGuidance] = useState(null);
   const [emotionHistory, setEmotionHistory] = useState([]);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
 
-  // -------------------------------
-  // 1️⃣ Setup WebSocket (role will update later)
-  // -------------------------------
+  console.log("MeetingRoom Loaded → roomId:", roomId, "password:", roomPassword);
+
+  // ------------------------------
+  // WEBSOCKET (Role + Password applied)
+  // ------------------------------
   const {
     isConnected,
     transcripts,
@@ -54,12 +53,12 @@ const MeetingRoom = ({ userInfo }) => {
     sendMessage,
   } = useWebSocket(roomId, userInfo.user_id, userInfo.username, roomPassword, userRole);
 
-  // -------------------------------
-  // 2️⃣ Setup WebRTC
-  // -------------------------------
+  // ------------------------------
+  // WEBRTC SETUP
+  // ------------------------------
   const {
     localStream,
-    remoteStreams,
+    remoteStreamsMap,    // Map<peerId, MediaStream>
     isVideoEnabled,
     isAudioEnabled,
     error: rtcError,
@@ -68,83 +67,70 @@ const MeetingRoom = ({ userInfo }) => {
     toggleVideo,
     toggleAudio,
     handleSignalingMessage,
-    handleParticipantLeft,
     startScreenShare,
-    stopScreenShare,
+    stopScreenShare
   } = useWebRTC(roomId, userInfo.user_id, sendSignalingMessage);
 
-  // -------------------------------
-  // 3️⃣ Audio Recorder
-  // -------------------------------
+  // ------------------------------
+  // AUDIO RECORDER
+  // ------------------------------
   const {
     isRecording,
     error: recorderError,
     startRecording,
-    stopRecording,
+    stopRecording
   } = useAudioRecorder((audioData) => {
     if (isConnected && audioData) {
       sendMessage({
-        type: 'audio_chunk',
+        type: "audio_chunk",
         audio_data: audioData,
         sample_rate: 16000,
       });
     }
   });
 
-  // -------------------------------
-  // 4️⃣ Load Room Info → Determine Role (HOST or PARTICIPANT)
-  // -------------------------------
+  // ------------------------------
+  // LOAD ROOM INFO → DETERMINE ROLE
+  // ------------------------------
   useEffect(() => {
-    const loadRoomInfo = async () => {
+    const loadRoom = async () => {
       try {
         const data = await meetingAPI.getRoomInfo(roomId);
         setRoomInfo(data);
 
-        const detectedRole = data.created_by === userInfo.username ? "host" : "participant";
-        console.log("🎭 DETECTED ROLE:", detectedRole);
+        const detectedRole =
+          data.created_by === userInfo.username ? "host" : "participant";
+
+        console.log("Detected Role →", detectedRole);
 
         setUserRole(detectedRole);
 
-      } catch (error) {
-        console.error('Failed to load room info:', error);
-        alert('Room not found or access denied');
-        navigate('/');
+        // 👉 Now connect WebSocket with correct password & role
+        connect({ onSignalingMessage: handleSignalingMessage });
+
+      } catch (err) {
+        console.error("Room load failed:", err);
+        alert("Room not found");
+        navigate("/");
       }
     };
 
-    loadRoomInfo();
-  }, [roomId, navigate]);
+    loadRoom();
+  }, [roomId]);
 
-  // ---------------------------------------------------
-  // 5️⃣ Reconnect WebSocket once ROLE is detected
-  // ---------------------------------------------------
+  // ------------------------------
+  // START CAMERA/MIC ONLY ONCE
+  // ------------------------------
   useEffect(() => {
-    if (!roomInfo) return;
-
-    console.log("🔁 Reconnecting WebSocket with role:", userRole);
-
-    disconnect();
-
-    setTimeout(() => {
-      connect({ onSignalingMessage: handleSignalingMessage });
-    }, 300);
-
-  }, [userRole]);
-
-  // ---------------------------------------------------
-  // 6️⃣ Initial media + websocket connection
-  // ---------------------------------------------------
-  useEffect(() => {
-    const initialize = async () => {
+    const initMedia = async () => {
       try {
         await startLocalMedia(false);
-        connect({ onSignalingMessage: handleSignalingMessage });
-      } catch (error) {
-        console.error('Failed to initialize meeting:', error);
+      } catch (err) {
+        console.error("Media init failed:", err);
       }
     };
 
-    initialize();
+    initMedia();
 
     return () => {
       stopRecording();
@@ -153,57 +139,60 @@ const MeetingRoom = ({ userInfo }) => {
     };
   }, []);
 
-  // ---------------------------------------------------
-  // 7️⃣ Update Emotion States
-  // ---------------------------------------------------
+  // ------------------------------
+  // UPDATE EMOTION UI
+  // ------------------------------
   useEffect(() => {
-    if (transcripts.length > 0) {
-      const latest = transcripts[0];
-      if (latest.emotion) {
-        setCurrentEmotion(latest.emotion);
-        setEmotionHistory(prev => [...prev, latest.emotion].slice(-10));
-      }
-      if (latest.emotion_guidance) {
-        setEmotionGuidance(latest.emotion_guidance);
-      }
+    if (!transcripts.length) return;
+
+    const latest = transcripts[0];
+
+    if (latest.emotion) {
+      setCurrentEmotion(latest.emotion);
+      setEmotionHistory((prev) => [...prev, latest.emotion].slice(-10));
+    }
+
+    if (latest.emotion_guidance) {
+      setEmotionGuidance(latest.emotion_guidance);
     }
   }, [transcripts]);
 
-  // -------------------------------
-  // 8️⃣ Leaving Room
-  // -------------------------------
-  const handleLeaveRoom = async () => {
-    const confirmLeave = window.confirm('Are you sure you want to leave the meeting?');
-    if (confirmLeave) {
-      stopRecording();
-      stopLocalMedia();
-      disconnect();
-      navigate('/');
-    }
+  // ------------------------------
+  // LEAVE MEETING
+  // ------------------------------
+  const handleLeaveRoom = () => {
+    stopRecording();
+    stopLocalMedia();
+    disconnect();
+    navigate("/");
   };
 
-  // -------------------------------
-  // 9️⃣ Export Transcript
-  // -------------------------------
+  // ------------------------------
+  // EXPORT TRANSCRIPT
+  // ------------------------------
   const handleExportTranscript = async () => {
     try {
-      const data = await meetingAPI.exportMeeting(roomId, 'json');
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const data = await meetingAPI.exportMeeting(roomId, "json");
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: "application/json",
+      });
+
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
+      const a = document.createElement("a");
+
       a.href = url;
       a.download = `transcript_${roomId}_${Date.now()}.json`;
       a.click();
+
       URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error('Export failed:', error);
-      alert('Failed to export transcript');
+    } catch (err) {
+      alert("Export failed");
     }
   };
 
-  // -------------------------------
-  // 🔟 Toggle Screen Share
-  // -------------------------------
+  // ------------------------------
+  // TOGGLE SCREEN SHARE
+  // ------------------------------
   const handleToggleScreenShare = async () => {
     try {
       if (isScreenSharing) {
@@ -213,15 +202,14 @@ const MeetingRoom = ({ userInfo }) => {
         await startScreenShare();
         setIsScreenSharing(true);
       }
-    } catch (error) {
-      console.error('Screen share error:', error);
-      alert('Failed to share screen');
+    } catch (err) {
+      console.error("Screen share error:", err);
     }
   };
 
-  // -------------------------------
-  // UI Rendering
-  // -------------------------------
+  // ------------------------------
+  // UI
+  // ------------------------------
   return (
     <div className="meeting-room">
 
@@ -231,43 +219,40 @@ const MeetingRoom = ({ userInfo }) => {
           <h2>{roomInfo?.room_name || roomId}</h2>
 
           <div className="meeting-status">
-            <span className={`status-dot ${isConnected ? 'connected' : 'disconnected'}`}></span>
-            <span>{isConnected ? 'Connected' : 'Connecting...'}</span>
+            <span className={`status-dot ${isConnected ? "connected" : "disconnected"}`} />
+            <span>{isConnected ? "Connected" : "Connecting…"}</span>
             <span className="separator">•</span>
             <span>{participants.length} participants</span>
-
-            {isRecording && (
-              <>
-                <span className="separator">•</span>
-                <span>🔴 Recording</span>
-              </>
-            )}
+            {isRecording && <span>• 🔴 Recording</span>}
           </div>
         </div>
 
-        {/* CONTROL BUTTONS */}
         <div className="meeting-controls">
-          <button className={`btn-control ${!isAudioEnabled ? 'muted' : ''}`} onClick={toggleAudio}>
+          {/* Audio */}
+          <button className={`btn-control ${!isAudioEnabled ? "muted" : ""}`} onClick={toggleAudio}>
             {isAudioEnabled ? <Mic size={20} /> : <MicOff size={20} />}
           </button>
 
-          <button className={`btn-control ${!isVideoEnabled ? 'muted' : ''}`} onClick={toggleVideo}>
+          {/* Video */}
+          <button className={`btn-control ${!isVideoEnabled ? "muted" : ""}`} onClick={toggleVideo}>
             {isVideoEnabled ? <Video size={20} /> : <VideoOff size={20} />}
           </button>
 
-          <button className={`btn-control ${isScreenSharing ? 'recording' : ''}`} onClick={handleToggleScreenShare}>
+          {/* Screen Share */}
+          <button className={`btn-control ${isScreenSharing ? "recording" : ""}`} onClick={handleToggleScreenShare}>
             {isScreenSharing ? <MonitorOff size={20} /> : <Monitor size={20} />}
           </button>
 
           <div className="control-divider" />
 
-          <button className={`btn-control ${isRecording ? 'recording' : ''}`} onClick={isRecording ? stopRecording : startRecording}>
+          {/* Recorder */}
+          <button className={`btn-control ${isRecording ? "recording" : ""}`} onClick={isRecording ? stopRecording : startRecording}>
             <Mic size={20} />
-            {isRecording && <span className="recording-indicator" />}
           </button>
 
           <div className="control-divider" />
 
+          {/* Leave */}
           <button className="btn-control-danger" onClick={handleLeaveRoom}>
             <PhoneOff size={20} />
             <span>Leave</span>
@@ -277,12 +262,10 @@ const MeetingRoom = ({ userInfo }) => {
 
       {/* MAIN CONTENT */}
       <div className="meeting-content">
-
-        {/* VIDEO GRID */}
         <div className="meeting-video-section">
           <VideoGrid
             localStream={localStream}
-            remoteStreams={remoteStreams}
+            remoteStreams={remoteStreamsMap}
             participants={participants}
             currentUserId={userInfo.user_id}
             isLocalVideoEnabled={isVideoEnabled}
@@ -291,58 +274,35 @@ const MeetingRoom = ({ userInfo }) => {
           />
         </div>
 
-        {/* RIGHT SIDE PANEL */}
         <div className="meeting-side-panel">
           <div className="panel-tabs">
-
-            <button className={`panel-tab ${activeTab === 'transcript' ? 'active' : ''}`} onClick={() => setActiveTab('transcript')}>
-              <FileText size={18} />
-              <span>Transcript</span>
-              <span className="tab-badge">{transcripts.length}</span>
+            <button className={`panel-tab ${activeTab === "transcript" ? "active" : ""}`} onClick={() => setActiveTab("transcript")}>
+              <FileText size={18} /> Transcript <span className="tab-badge">{transcripts.length}</span>
             </button>
 
-            <button className={`panel-tab ${activeTab === 'chat' ? 'active' : ''}`} onClick={() => setActiveTab('chat')}>
-              <MessageSquare size={18} />
-              <span>Chat</span>
-              {chatMessages.length > 0 && <span className="tab-badge">{chatMessages.length}</span>}
+            <button className={`panel-tab ${activeTab === "chat" ? "active" : ""}`} onClick={() => setActiveTab("chat")}>
+              <MessageSquare size={18} /> Chat {chatMessages.length > 0 && <span className="tab-badge">{chatMessages.length}</span>}
             </button>
 
-            <button className={`panel-tab ${activeTab === 'emotion' ? 'active' : ''}`} onClick={() => setActiveTab('emotion')}>
-              <Heart size={18} />
-              <span>Emotion</span>
+            <button className={`panel-tab ${activeTab === "emotion" ? "active" : ""}`} onClick={() => setActiveTab("emotion")}>
+              <Heart size={18} /> Emotion
             </button>
 
-            <button className={`panel-tab ${activeTab === 'tasks' ? 'active' : ''}`} onClick={() => setActiveTab('tasks')}>
-              <CheckSquare size={18} />
-              <span>Tasks</span>
+            <button className={`panel-tab ${activeTab === "tasks" ? "active" : ""}`} onClick={() => setActiveTab("tasks")}>
+              <CheckSquare size={18} /> Tasks
             </button>
 
-            <button className={`panel-tab ${activeTab === 'summary' ? 'active' : ''}`} onClick={() => setActiveTab('summary')}>
-              <Summary size={18} />
-              <span>Summary</span>
+            <button className={`panel-tab ${activeTab === "summary" ? "active" : ""}`} onClick={() => setActiveTab("summary")}>
+              <Summary size={18} /> Summary
             </button>
           </div>
 
           <div className="panel-content">
-            {activeTab === 'transcript' && (
-              <TranscriptPanel transcripts={transcripts} onExport={handleExportTranscript} />
-            )}
-
-            {activeTab === 'chat' && (
-              <ChatPanel messages={chatMessages} onSendMessage={sendChatMessage} currentUser={userInfo} />
-            )}
-
-            {activeTab === 'emotion' && (
-              <EmotionPanel currentEmotion={currentEmotion} emotionGuidance={emotionGuidance} emotionHistory={emotionHistory} />
-            )}
-
-            {activeTab === 'tasks' && (
-              <TaskPanel roomId={roomId} currentUser={userInfo} />
-            )}
-
-            {activeTab === 'summary' && (
-              <SummaryPanel roomId={roomId} />
-            )}
+            {activeTab === "transcript" && <TranscriptPanel transcripts={transcripts} onExport={handleExportTranscript} />}
+            {activeTab === "chat" && <ChatPanel messages={chatMessages} onSendMessage={sendChatMessage} currentUser={userInfo} />}
+            {activeTab === "emotion" && <EmotionPanel currentEmotion={currentEmotion} emotionGuidance={emotionGuidance} emotionHistory={emotionHistory} />}
+            {activeTab === "tasks" && <TaskPanel roomId={roomId} currentUser={userInfo} />}
+            {activeTab === "summary" && <SummaryPanel roomId={roomId} />}
           </div>
         </div>
       </div>

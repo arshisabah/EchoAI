@@ -1,6 +1,7 @@
 # app/routers/meeting.py
 """
-Fixed Multi-User Meeting Router with proper error handling
+Fixed Multi-User Meeting Router with proper error handling and improved
+WebRTC initialization (peer list + new_participant flow).
 """
 
 import asyncio
@@ -10,7 +11,7 @@ import base64
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Query, Body
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Query
 from pydantic import BaseModel
 
 from app.services.meeting_room_manager import (
@@ -38,7 +39,7 @@ class CreateRoomRequest(BaseModel):
     max_participants: int = 50
 
 
-# REST Endpoints
+# REST Endpoints --------------------------------------------------------------
 
 @router.post("/rooms/create")
 async def create_meeting_room(room_id: str, request: CreateRoomRequest):
@@ -56,20 +57,22 @@ async def create_meeting_room(room_id: str, request: CreateRoomRequest):
             password=password,
             max_participants=request.max_participants
         )
-        
+
         # Create session in transcript store
         store = get_transcript_store()
-        await store.create_session(room_id, {
+        maybe = store.create_session(room_id, {
             "room_name": request.room_name,
             "created_by": request.created_by
         })
-        
+        if asyncio.iscoroutine(maybe):
+            await maybe
+
         return {
             "success": True,
             "room": room.to_dict(),
             "websocket_url": f"/meeting/rooms/{room_id}/ws"
         }
-        
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -83,12 +86,12 @@ async def get_room_info(room_id: str):
     try:
         room_manager = get_meeting_room_manager()
         room_info = await room_manager.get_room_info(room_id)
-        
+
         if not room_info:
             raise HTTPException(status_code=404, detail="Room not found")
-        
+
         return room_info
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -102,12 +105,12 @@ async def list_rooms():
     try:
         room_manager = get_meeting_room_manager()
         rooms = await room_manager.list_rooms()
-        
+
         return {
             "rooms": rooms,
             "total_count": len(rooms)
         }
-        
+
     except Exception as e:
         logger.error(f"Error listing rooms: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -119,29 +122,26 @@ async def end_meeting_room(room_id: str, ended_by: str = Query(...)):
     try:
         room_manager = get_meeting_room_manager()
         room = room_manager.rooms.get(room_id)
-        
+
         if not room:
             raise HTTPException(status_code=404, detail="Room not found")
-        
+
         await room_manager.end_room(room_id, ended_by)
-        
-        # Also delete from store
-        store = get_transcript_store()
+
         # Also delete from store (if exists)
         store = get_transcript_store()
         try:
-            # if async:
             maybe = store.delete_session(room_id)
             if asyncio.iscoroutine(maybe):
                 await maybe
         except Exception as e:
             logger.debug(f"Warning: delete_session failed (maybe missing): {e}", exc_info=True)
-        
+
         return {
             "success": True,
             "message": f"Room {room_id} ended successfully"
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -155,13 +155,13 @@ async def get_room_transcript(room_id: str):
     try:
         store = get_transcript_store()
         entries = store.get_session_transcript(room_id)
-        
+
         return {
             "room_id": room_id,
             "transcript": json.loads(json.dumps([e.to_dict() for e in entries], default=str)),
             "total_entries": len(entries)
         }
-        
+
     except Exception as e:
         logger.error(f"Error getting transcript: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -172,17 +172,17 @@ async def get_meeting_tasks(room_id: str):
     """Get all tasks from the meeting."""
     try:
         task_engine = get_task_assignment_engine()
-        
+
         tasks = task_engine.get_meeting_tasks(room_id)
         summary = task_engine.get_task_summary(room_id)
-        
+
         return {
             "room_id": room_id,
             "tasks": [task.to_dict() for task in tasks],
             "summary": summary,
             "total_tasks": len(tasks)
         }
-        
+
     except Exception as e:
         logger.error(f"Error getting tasks: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -194,31 +194,31 @@ async def extract_tasks(room_id: str):
     try:
         store = get_transcript_store()
         transcript_entries = store.get_session_transcript(room_id)
-        
+
         if not transcript_entries:
             raise HTTPException(status_code=404, detail="No transcript found")
-        
+
         room_manager = get_meeting_room_manager()
         room = room_manager.rooms.get(room_id)
-        
+
         if not room:
             raise HTTPException(status_code=404, detail="Room not found")
-        
+
         participants = [p.to_dict() for p in room.participants.values()]
-        
+
         task_engine = get_task_assignment_engine()
         tasks = await task_engine.extract_tasks_from_transcript(
             [e.to_dict() for e in transcript_entries],
             room_id,
             participants
         )
-        
+
         return {
             "success": True,
             "extracted_tasks": [task.to_dict() for task in tasks],
             "task_count": len(tasks)
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -232,7 +232,7 @@ async def get_meeting_summary(room_id: str):
     try:
         store = get_transcript_store()
         transcript_entries = store.get_session_transcript(room_id)
-        
+
         if not transcript_entries:
             return {
                 "room_id": room_id,
@@ -240,7 +240,7 @@ async def get_meeting_summary(room_id: str):
                 "tasks": [],
                 "analytics": {}
             }
-        
+
         # Generate AI summary
         summary_service = get_summary_service()
         transcript_texts = [e.text for e in transcript_entries]
@@ -249,15 +249,15 @@ async def get_meeting_summary(room_id: str):
             room_id,
             mode="final"
         )
-        
+
         # Get tasks
         task_engine = get_task_assignment_engine()
         task_summary = task_engine.get_task_summary(room_id)
         tasks = task_engine.get_meeting_tasks(room_id)
-        
+
         # Get analytics
         analytics = store.get_analytics(room_id)
-        
+
         return {
             "room_id": room_id,
             "summary": summary_result,
@@ -267,7 +267,7 @@ async def get_meeting_summary(room_id: str):
             "total_participants": len(set(e.speaker for e in transcript_entries)),
             "generated_at": datetime.utcnow().isoformat()
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -282,7 +282,7 @@ async def export_meeting_data(room_id: str, format: str = Query("json")):
         summary_data = await get_meeting_summary(room_id)
         store = get_transcript_store()
         full_transcript = store.get_session_transcript(room_id)
-        
+
         export_data = {
             "room_id": room_id,
             "export_timestamp": datetime.utcnow().isoformat(),
@@ -291,15 +291,15 @@ async def export_meeting_data(room_id: str, format: str = Query("json")):
             "tasks": summary_data.get("tasks", []),
             "analytics": summary_data.get("analytics", {})
         }
-        
+
         return export_data
-        
+
     except Exception as e:
         logger.error(f"Error exporting data: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# WebSocket for Real-Time Collaboration
+# WebSocket for Real-Time Collaboration ---------------------------------------
 
 @router.websocket("/rooms/{room_id}/ws")
 async def meeting_websocket(
@@ -313,30 +313,30 @@ async def meeting_websocket(
     """Real-time meeting WebSocket."""
     room_manager = get_meeting_room_manager()
     try:
-        # Accept first, but guard join with try/except so we can close on failures
+        # Accept socket
         await websocket.accept()
 
-        # Ensure room exists before attempting join (avoid creating implicit room)
+        # Ensure room exists
         existing_room = room_manager.rooms.get(room_id)
         if not existing_room:
-            # send clear error then close
             await websocket.send_json({"type": "error", "message": f"Room {room_id} not found"})
             await websocket.close()
             return
 
-        # If user already has a connection, close that connection first (safer than leave_room which broadcasts)
+        # If user already connected, close old socket and remove record
         if existing_room and user_id in existing_room.participants:
             old_participant = existing_room.participants[user_id]
             try:
-                # close old websocket quietly
                 await old_participant.websocket.close()
             except Exception:
                 logger.debug(f"Failed to close old websocket for {user_id}", exc_info=True)
-            # remove old record
             existing_room.participants.pop(user_id, None)
 
-        # Now join room
-        participant_role = ParticipantRole(role)
+        # Determine actual role server-side (trust created_by)
+        room_for_role_check = room_manager.rooms.get(room_id)
+        actual_role = ParticipantRole.HOST if (room_for_role_check and room_for_role_check.created_by == username) else ParticipantRole.PARTICIPANT
+
+        # Try to join the room
         try:
             participant = await room_manager.join_room(
                 room_id=room_id,
@@ -344,64 +344,99 @@ async def meeting_websocket(
                 username=username,
                 websocket=websocket,
                 password=password,
-                role=participant_role
+                role=actual_role
             )
         except Exception as e:
             logger.error(f"Failed to join room {room_id} for user {user_id}: {e}", exc_info=True)
             await websocket.send_json({"type": "error", "message": str(e)})
             await websocket.close()
             return
-        logger.info(f"✅ {username} joined {room_id}")
-        # Notify all others that a new participant joined (for WebRTC handshake)
+
+        logger.info(f"✅ {username} joined {room_id} as {participant.role.value}")
+
+        # Broadcast a lightweight "new_participant" event to others so they start WebRTC handshake
+        # (exclude the newly-joined user)
         await room_manager.broadcast_to_room(room_id, {
             "type": "new_participant",
             "user_id": user_id,
             "username": username,
             "timestamp": datetime.utcnow().isoformat()
         }, exclude_user_id=user_id)
-        
-        # Send welcome with room info
+
+        # Send welcome + ack to the new user
         room_info = await room_manager.get_room_info(room_id)
         await websocket.send_json({
             "type": "welcome",
             "message": f"Welcome {username}!",
-            "your_role": role,
+            "your_role": participant.role.value,
             "room_info": room_info
         })
 
-         # 6️⃣ (✨ NEW) Send a connection acknowledgement to frontend
         await websocket.send_json({
             "type": "connection_ack",
             "message": f"Connected successfully as {username}",
             "timestamp": datetime.utcnow().isoformat()
         })
-        
-        # Message loop
+
+        # Send peer list (existing participants excluding self) so the client can initiate offers
+        peers = []
+        room_after_join = room_manager.rooms.get(room_id)
+        if room_after_join:
+            for uid, p in room_after_join.participants.items():
+                if uid == user_id:
+                    continue
+                peers.append({"user_id": uid, "username": p.username})
+
+        await websocket.send_json({
+            "type": "peer_list",
+            "peers": peers
+        })
+
+        # Echo a new_participant to the new user (self = True) to make client-side logic uniform
+        await websocket.send_json({
+            "type": "new_participant",
+            "user_id": user_id,
+            "username": username,
+            "timestamp": datetime.utcnow().isoformat(),
+            "self": True
+        })
+
+        # Main receive loop
         while True:
             try:
-                # Wait for client message with a 30-second timeout
                 data = await asyncio.wait_for(websocket.receive_text(), timeout=30)
             except asyncio.TimeoutError:
-                # If no message within 30 seconds, send heartbeat ping
-                await websocket.send_json({
-                    "type": "ping_timeout",
-                    "message": "No message received within 30 seconds. Sending keep-alive ping.",
-                    "timestamp": datetime.utcnow().isoformat()
-                })
-                continue  # Go back to waiting for next message
+                # send keep-alive ping
+                try:
+                    await websocket.send_json({
+                        "type": "ping_timeout",
+                        "message": "No message received within 30 seconds. Sending keep-alive ping.",
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
+                except Exception:
+                    pass
+                continue
+            except WebSocketDisconnect:
+                logger.info(f"WebSocketDisconnect for {username} in {room_id}")
+                break
             except Exception as e:
                 logger.error(f"WebSocket receive error in {room_id}: {e}", exc_info=True)
-                break  # Exit loop on fatal receive errors
+                break
 
-            # Normal message handling
-            message = json.loads(data)
+            # Handle incoming message
+            try:
+                message = json.loads(data)
+            except Exception:
+                logger.warning("Invalid JSON received, skipping")
+                continue
+
             message_type = message.get("type")
-            
+
             if message_type == "audio_chunk":
                 await process_audio(
                     room_id, user_id, username, message, room_manager, websocket
                 )
-            
+
             elif message_type == "chat":
                 chat_message = {
                     "type": "chat_message",
@@ -410,49 +445,65 @@ async def meeting_websocket(
                     "timestamp": datetime.utcnow().isoformat()
                 }
                 await room_manager.broadcast_to_room(room_id, chat_message)
-                await websocket.send_json({"type": "chat_ack", "message": chat_message["message"]})
+                try:
+                    await websocket.send_json({"type": "chat_ack", "message": chat_message["message"]})
+                except Exception:
+                    pass
 
-            # --- WebRTC Signaling ---
+            # WebRTC signaling routing: target_id must be present and will be forwarded
             elif message_type in {"webrtc_offer", "webrtc_answer", "ice_candidate"}:
                 target_id = message.get("target_id")
                 if target_id and room_id in room_manager.rooms:
                     room = room_manager.rooms[room_id]
                     if target_id in room.participants:
                         target_ws = room.participants[target_id].websocket
-                        await target_ws.send_json({
-                            **message,
-                            "from_id": user_id,
-                            "timestamp": datetime.utcnow().isoformat()
-                        })
+                        try:
+                            await target_ws.send_json({
+                                **message,
+                                "from_id": user_id,
+                                "timestamp": datetime.utcnow().isoformat()
+                            })
+                        except Exception as e:
+                            logger.warning(f"Failed to forward signaling to {target_id}: {e}", exc_info=True)
                     else:
-                        logger.warning(f"⚠️ Target {target_id} not found in {room_id}") 
-
+                        logger.warning(f"⚠️ Target {target_id} not found in {room_id}")
+                else:
+                    logger.warning("Signaling message without target_id or room missing")
 
             elif message_type == "ping":
-                await websocket.send_json({
-                    "type": "pong",
-                    "timestamp": datetime.utcnow().isoformat()
-                })
-        
+                try:
+                    await websocket.send_json({
+                        "type": "pong",
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
+                except Exception:
+                    pass
+
+            else:
+                # Unknown/other messages — log for debugging
+                logger.debug(f"Unknown WS message from {username} in {room_id}: {message_type}")
+
     except WebSocketDisconnect:
-        logger.info(f"❌ {username} left {room_id}")
-        await room_manager.leave_room(room_id, user_id)
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.info(f"❌ {username} disconnected from {room_id}")
         try:
             await room_manager.leave_room(room_id, user_id)
-        except:
+        except Exception:
+            logger.exception("Error during leave_room on WebSocketDisconnect")
+    except Exception as e:
+        logger.error(f"WebSocket error for {username} in {room_id}: {e}", exc_info=True)
+        try:
+            await room_manager.leave_room(room_id, user_id)
+        except Exception:
+            logger.exception("Error during leave_room on exception")
+    finally:
+        # final cleanup: ensure the participant is removed
+        try:
+            await room_manager.leave_room(room_id, user_id)
+        except Exception:
             pass
 
-    finally:
-        # 8️⃣ (✨ NEW) Always ensure cleanup even if socket closes unexpectedly
-        if websocket.client_state.name != "CONNECTED":
-            try:
-                await room_manager.leave_room(room_id, user_id)
-            except Exception:
-                pass
 
-
+# Audio processing helper -----------------------------------------------------
 
 async def process_audio(room_id, user_id, username, message, room_manager, websocket):
     """Process audio chunk using unified Orchestrator pipeline."""
@@ -476,8 +527,12 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
 
         # 🔹 Handle lightweight "listening" heartbeats
         if result and result.get("type") == "listening":
-            await websocket.send_json(result)  # send only to this user (not broadcast)
+            try:
+                await websocket.send_json(result)  # send only to this user (not broadcast)
+            except Exception:
+                pass
             return
+
         # 4️⃣ Skip empty result
         if not result:
             logger.debug(f"No result from orchestrator for user {username} in {room_id}")
@@ -509,7 +564,7 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
             guidance = guidance_engine.get_guidance(emotion, text, confidence,
                                                    context={"username": username, "room_id": room_id, "speaker": speaker})
 
-            # Broadcast
+            # Broadcast transcript + emotion -> uses manager's broadcast_transcript
             await room_manager.broadcast_transcript(
                 room_id=room_id,
                 user_id=user_id,
@@ -522,7 +577,6 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
 
             # Store transcript
             store = get_transcript_store()
-            # store.add_transcript_entry might be async — use await if it's defined async
             entry_obj = await store.add_transcript_entry(
                 meeting_id=room_id,
                 speaker=speaker,
