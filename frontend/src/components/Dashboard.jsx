@@ -44,13 +44,14 @@ const Dashboard = ({ userInfo }) => {
       await meetingAPI.createRoom(roomId, {
         room_name: newRoomData.roomName,
         created_by: userInfo.username,
-        password: newRoomData.password || null,
+        password: newRoomData.password ? newRoomData.password : undefined,
         max_participants: parseInt(newRoomData.maxParticipants),
       });
 
       setIsCreating(false);
       setNewRoomData({ roomName: '', password: '', maxParticipants: 50 });
-      navigate(`/meeting/${roomId}`);
+      navigate(`/meeting/rooms/${roomId}`);
+
     } catch (error) {
       console.error('Error creating room:', error);
       alert('Failed to create room: ' + error.message);
@@ -58,7 +59,8 @@ const Dashboard = ({ userInfo }) => {
   };
 
   const handleJoinRoom = (roomId) => {
-    navigate(`/meeting/${roomId}`);
+    navigate(`/meeting/rooms/${roomId}`);
+
   };
 
   if (loading) {
@@ -104,7 +106,7 @@ const Dashboard = ({ userInfo }) => {
               </div>
 
               <div className="form-group">
-                <label>Password (Optional)</label>
+                <label>Password </label>
                 <input
                   type="password"
                   value={newRoomData.password}

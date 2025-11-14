@@ -1,6 +1,6 @@
+// src/components/Meeting/VideoGrid.jsx
 import React, { useEffect, useRef } from 'react';
 import { Mic, MicOff, Video as VideoIcon, VideoOff, User } from 'lucide-react';
-
 
 const VideoTile = ({ stream, username, userId, isLocal, isMuted, isVideoOff, isActiveSpeaker }) => {
   const videoRef = useRef(null);
@@ -49,33 +49,33 @@ const VideoTile = ({ stream, username, userId, isLocal, isMuted, isVideoOff, isA
 const VideoGrid = ({
   localStream,
   remoteStreams,
-  participants,
+  participants = [],
   currentUserId,
   isLocalVideoEnabled,
   isLocalAudioEnabled,
   activeSpeakerId
 }) => {
-  // ✅ FIX: Filter out current user from remote participants
-  const remoteParticipants = participants.filter(p => p.user_id !== currentUserId);
-  
+  // Defensive: ensure participants is an array
+  const participantList = Array.isArray(participants) ? participants : [];
+
   // Filter out current user from participants to avoid duplication
-  const remoteParticipants = participants.filter(p => p.user_id !== currentUserId);
-  
+  const otherParticipants = participantList.filter(p => p.user_id !== currentUserId);
+
   // Combine local + remote participants
   const combinedParticipants = [
     {
       user_id: currentUserId,
-      username: participants.find(p => p.user_id === currentUserId)?.username || 'You',
-      stream: localStream,
+      username: participantList.find(p => p.user_id === currentUserId)?.username || 'You',
+      stream: localStream || null,
       isLocal: true,
-      stream: localStream,
       isMuted: !isLocalAudioEnabled,
       isVideoOff: !isLocalVideoEnabled,
     },
-    ...remoteParticipants.map((p) => ({
+    ...otherParticipants.map((p) => ({
       ...p,
       isLocal: false,
-      stream: remoteStreams.get(p.user_id),
+      // remoteStreams might be a Map or an object — handle both safely
+      stream: typeof remoteStreams?.get === 'function' ? remoteStreams.get(p.user_id) : (remoteStreams?.[p.user_id] ?? null),
       isVideoOff: !p.is_video_on,
       isMuted: !p.is_audio_on,
     })),
@@ -98,7 +98,6 @@ const VideoGrid = ({
           isActiveSpeaker={activeSpeakerId === p.user_id}
         />
       ))}
-
 
       {/* Placeholder tiles for empty slots */}
       {participantCount < 4 && [...Array(4 - participantCount)].map((_, i) => (

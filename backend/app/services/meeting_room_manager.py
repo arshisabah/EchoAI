@@ -177,10 +177,20 @@ class MeetingRoomManager:
             
             if not room:
                 raise ValueError(f"Room {room_id} not found")
-            
-            # Check password
-            if room.password and room.password != password:
-                raise ValueError("Invalid room password")
+
+            # Normalize room-stored password
+            clean_stored = None if room.password in (None, "", " ", "null", "undefined") else room.password
+
+            # Normalize received password
+            clean_received = None if password in (None, "", " ", "null", "undefined") else password
+
+            logger.warning(f"🔐 Password check → stored={clean_stored!r}, received={clean_received!r}")
+
+            # Validate only if room HAS a password
+            if clean_stored is not None:
+                if clean_received != clean_stored:
+                    raise ValueError("Invalid room password")
+
             
             # Check capacity
             if len(room.participants) >= room.max_participants:
@@ -210,11 +220,13 @@ class MeetingRoomManager:
             logger.info(f"User {username} ({user_id}) joined room {room_id}")
             
             # Broadcast join event to all participants
-            # Add participant to room first
+            
             room.participants[user_id] = participant
             # Start room if this is the first participant
             if len(room.participants) == 0 and room.status == MeetingStatus.WAITING:
                 room.status = MeetingStatus.ACTIVE
+            
+            room.participants[user_id] = participant
 
             # Then broadcast join event with updated counts
             await self.broadcast_to_room(room_id, {

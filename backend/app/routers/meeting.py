@@ -46,12 +46,14 @@ async def create_meeting_room(room_id: str, request: CreateRoomRequest):
     try:
         room_manager = get_meeting_room_manager()
         await room_manager.start_broadcasting()
-        
+        password = request.password
+        if password in ("", " ", None, "null", "undefined"):
+            password = None
         room = await room_manager.create_room(
             room_id=room_id,
             room_name=request.room_name,
             created_by=request.created_by,
-            password=request.password,
+            password=password,
             max_participants=request.max_participants
         )
         

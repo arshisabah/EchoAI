@@ -63,13 +63,14 @@ const AppContent = () => {
                   }
                 />
                 <Route
-                  path="/meeting/:roomId"
+                  path="/meeting/rooms/:roomId"
                   element={
                     <ProtectedRoute>
                       <MeetingRoom userInfo={user} />
                     </ProtectedRoute>
                   }
                 />
+              
                 <Route
                   path="/analytics"
                   element={

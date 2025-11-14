@@ -10,7 +10,6 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
     const [transcripts, setTranscripts] = useState([]);
     const [participants, setParticipants] = useState([]);
     const [activeSpeakerId, setActiveSpeakerId] = useState(null);
-
     const [chatMessages, setChatMessages] = useState([]);
     const [error, setError] = useState(null);
     const [lastMessage, setLastMessage] = useState(null);
@@ -26,10 +25,12 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
     const connect = useCallback((options = {}) => {
         connectOptionsRef.current = options;
         const { onSignalingMessage } = options;
+        
         // Store in ref to avoid stale closure during reconnection
         if (onSignalingMessage) {
             onSignalingMessageRef.current = onSignalingMessage;
         }
+        
         // Prevent multiple simultaneous connection attempts
         if (isConnectingRef.current || wsRef.current?.readyState === WebSocket.OPEN) {
             return;
@@ -38,7 +39,7 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
         isConnectingRef.current = true;
 
         try {
-            const wsUrl = `${WS_BASE_URL}/meeting/rooms/${roomId}/ws?user_id=${encodeURIComponent(userId)}&username=${encodeURIComponent(username)}&role=${role}${password ? `&password=${encodeURIComponent(password)}` : ''}`;
+            const wsUrl = `${WS_BASE_URL}/meeting/rooms/${roomId}/ws?user_id=${encodeURIComponent(userId)}&username=${encodeURIComponent(username)}&role=${role}&password=${encodeURIComponent(password || "")}`;
 
             console.log('🔌 Connecting to WebSocket:', wsUrl);
             wsRef.current = new WebSocket(wsUrl);
@@ -72,7 +73,6 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
                         case 'connection_ack':
                             console.log('📩 Welcome:', data.message);
                             setIsConnected(true);
-                            setIsConnected(true); // Explicitly set connected state
                             if (data.room_info?.participants) {
                                 setParticipants(data.room_info.participants);
                             }
@@ -92,7 +92,9 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
                                         username: data.username,
                                         role: data.role,
                                         is_speaking: false,
-                                        is_muted: false
+                                        is_muted: false,
+                                        is_video_on: true,
+                                        is_audio_on: true
                                     }];
                                 }
                                 return prev;
@@ -120,6 +122,7 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
                                 )
                             );
                             break;
+
                         case 'active_speaker':
                             setActiveSpeakerId(data.user_id);
                             break;
@@ -156,8 +159,11 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
                         case 'webrtc_offer':
                         case 'webrtc_answer':
                         case 'ice_candidate':
-                            if (onSignalingMessageRef.current) onSignalingMessageRef.current(data);
+                            if (onSignalingMessageRef.current) {
+                                onSignalingMessageRef.current(data);
+                            }
                             break;
+
                         default:
                             console.log('📨 Unknown message type:', data.type, data);
                     }
@@ -191,7 +197,6 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
 
                     reconnectTimeoutRef.current = setTimeout(() => {
                         connect(connectOptionsRef.current);
-                        connect({ onSignalingMessage: onSignalingMessageRef.current }); // preserve handler during reconnects
                     }, delay);
                 } else if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
                     setError('Failed to connect after multiple attempts. Please refresh the page.');
@@ -253,18 +258,17 @@ export const useWebSocket = (roomId, userId, username, password = null, role = '
             message: messageText,
         });
     }, [sendMessage]);
+
     const sendSignalingMessage = useCallback((message) => {
         return sendMessage(message);
     }, [sendMessage]);
 
-    // Connect on mount
-    // Do not auto-connect on mount — we will connect manually from MeetingRoom.jsx
+    // Cleanup on unmount
     useEffect(() => {
         return () => {
             disconnect();
         };
     }, [disconnect]);
-
 
     return {
         isConnected,

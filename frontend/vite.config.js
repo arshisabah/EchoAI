@@ -8,12 +8,12 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://192.168.1.5:8000', // ✅ Use your backend IP, not localhost
+        target: 'http://localhost:8000', // ✅ Use your backend IP, not localhost
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
       '/meeting': {
-        target: 'ws://192.168.1.5:8000', // ✅ Use ws:// + your LAN IP
+        target: 'http://localhost:8000', // ✅ Use ws:// + your LAN IP
         changeOrigin: true,
         ws: true,
         secure: false,
