@@ -51,8 +51,8 @@ const MeetingRoom = ({ userInfo }) => {
     sendChatMessage,
     sendSignalingMessage,
     sendMessage,
+    sendAudioChunk,
   } = useWebSocket(roomId, userInfo.user_id, userInfo.username, roomPassword, userRole);
-
   // ------------------------------
   // WEBRTC SETUP
   // ------------------------------
@@ -78,16 +78,13 @@ const MeetingRoom = ({ userInfo }) => {
     isRecording,
     error: recorderError,
     startRecording,
-    stopRecording
-  } = useAudioRecorder((audioData) => {
-    if (isConnected && audioData) {
-      sendMessage({
-        type: "audio_chunk",
-        audio_data: audioData,
-        sample_rate: 16000,
-      });
+    stopRecording,
+} = useAudioRecorder((pcmBytes) => {
+    // pcmBytes is Uint8Array from optimized recorder
+    if (isTranscriptConnected) {
+        sendAudioChunk(pcmBytes);
     }
-  });
+});
 
   // ------------------------------
   // LOAD ROOM INFO → DETERMINE ROLE
@@ -125,6 +122,7 @@ const MeetingRoom = ({ userInfo }) => {
     const initMedia = async () => {
       try {
         await startLocalMedia(false);
+        startRecording();
       } catch (err) {
         console.error("Media init failed:", err);
       }

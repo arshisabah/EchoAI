@@ -1,459 +1,663 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EchoAI Backend Test Client</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f5f7fa;
-            padding: 20px;
-        }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px;
-            border-radius: 10px;
-            margin-bottom: 30px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }
-        .header h1 { font-size: 28px; margin-bottom: 10px; }
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-            gap: 20px;
-            margin-bottom: 20px;
-        }
-        .card {
-            background: white;
-            padding: 25px;
-            border-radius: 10px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-        }
-        .card h2 {
-            font-size: 18px;
-            margin-bottom: 15px;
-            color: #333;
-            border-bottom: 2px solid #667eea;
-            padding-bottom: 10px;
-        }
-        .input-group { margin-bottom: 15px; }
-        .input-group label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: 500;
-            color: #555;
-        }
-        .input-group input {
-            width: 100%;
-            padding: 10px;
-            border: 2px solid #e1e8ed;
-            border-radius: 5px;
-            font-size: 14px;
-        }
-        .input-group input:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        .button-group { display: flex; gap: 10px; flex-wrap: wrap; }
-        button {
-            padding: 10px 20px;
-            border: none;
-            border-radius: 5px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-        .btn-primary { background: #667eea; color: white; }
-        .btn-primary:hover { background: #5568d3; }
-        .btn-success { background: #48bb78; color: white; }
-        .btn-success:hover { background: #38a169; }
-        .btn-danger { background: #f56565; color: white; }
-        .btn-danger:hover { background: #e53e3e; }
-        .btn-warning { background: #ed8936; color: white; }
-        .status {
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 15px;
-            font-weight: 500;
-        }
-        .status.connected { background: #c6f6d5; color: #22543d; }
-        .status.disconnected { background: #fed7d7; color: #742a2a; }
-        .status.processing { background: #feebc8; color: #7c2d12; }
-        .log-container {
-            background: #1a202c;
-            color: #e2e8f0;
-            padding: 15px;
-            border-radius: 5px;
-            max-height: 300px;
-            overflow-y: auto;
-            font-family: 'Courier New', monospace;
-            font-size: 12px;
-        }
-        .log-entry {
-            margin-bottom: 5px;
-            padding: 5px;
-            border-left: 3px solid #4a5568;
-        }
-        .log-entry.success { border-left-color: #48bb78; }
-        .log-entry.error { border-left-color: #f56565; }
-        .log-entry.info { border-left-color: #4299e1; }
-        .transcript-entry {
-            background: #f7fafc;
-            padding: 10px;
-            margin-bottom: 10px;
-            border-radius: 5px;
-            border-left: 3px solid #667eea;
-        }
-        .transcript-entry .speaker {
-            font-weight: 600;
-            color: #667eea;
-            margin-bottom: 5px;
-        }
-        .transcript-entry .text { color: #2d3748; }
-        .transcript-entry .meta {
-            font-size: 11px;
-            color: #718096;
-            margin-top: 5px;
-        }
-    </style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>EchoAI — Full Test Dashboard</title>
+  <style>
+    *{box-sizing:border-box}
+    body{font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,-apple-system,Helvetica,Arial;margin:20px;background:#f5f7fa;color:#1f2937}
+    .wrap{max-width:1200px;margin:0 auto;display:grid;grid-template-columns:1fr 420px;gap:20px}
+    .panel{background:#fff;border-radius:10px;padding:18px;box-shadow:0 6px 18px rgba(8,15,30,0.06)}
+    .header{grid-column:1/-1;background:linear-gradient(135deg,#667eea,#764ba2);color:white;padding:20px;border-radius:10px;margin-bottom:6px}
+    h1{margin:0 0 6px;font-size:20px}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    label{font-size:13px;color:#374151;margin-bottom:6px;display:block}
+    input[type=text],select{padding:10px;border:1px solid #e6eef8;border-radius:8px;width:100%}
+    button{padding:9px 12px;border-radius:8px;border:0;cursor:pointer;font-weight:600}
+    .btn{background:#667eea;color:#fff}
+    .btn-ghost{background:#edf2ff;color:#1f2937}
+    .btn-danger{background:#f56565;color:#fff}
+    .status{padding:8px;border-radius:8px;font-weight:600}
+    .connected{background:#c6f6d5;color:#22543d}
+    .disconnected{background:#fed7d7;color:#742a2a}
+    .processing{background:#fffbeb;color:#92400e}
+    .log{background:#0f1724;color:#e6eef8;padding:12px;border-radius:8px;height:320px;overflow:auto;font-family:monospace;font-size:13px}
+    .transcripts{background:#fff;padding:12px;border-radius:8px;height:320px;overflow:auto}
+    .transcript-item{border-left:4px solid #667eea;padding:8px;margin-bottom:8px;background:#fbfdff}
+    .controls{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .small{padding:6px 8px;font-size:13px;border-radius:6px}
+    .field{margin-bottom:10px}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .meta{font-size:12px;color:#475569}
+    .badge{background:#eef2ff;padding:4px 8px;border-radius:999px;font-weight:700;color:#3730a3}
+    .footer{grid-column:1/-1;margin-top:12px;color:#64748b;font-size:13px}
+  </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🎙️ EchoAI Backend Test Client</h1>
-            <p>Interactive testing interface for real-time transcription backend</p>
-        </div>
-
-        <div class="grid">
-            <div class="card">
-                <h2>🔌 Connection</h2>
-                <div class="input-group">
-                    <label>Session ID</label>
-                    <input type="text" id="sessionId" value="test-session-001" placeholder="Enter session ID">
-                </div>
-                <div id="connectionStatus" class="status disconnected">❌ Disconnected</div>
-                <div class="button-group">
-                    <button class="btn-success" onclick="connectWebSocket()">Connect</button>
-                    <button class="btn-danger" onclick="disconnectWebSocket()">Disconnect</button>
-                </div>
-            </div>
-
-            <div class="card">
-                <h2>🌐 REST API Tests</h2>
-                <div class="button-group">
-                    <button class="btn-primary" onclick="testHealth()">Health Check</button>
-                    <button class="btn-primary" onclick="testCreateSession()">Create Session</button>
-                    <button class="btn-primary" onclick="testGetTranscript()">Get Transcript</button>
-                    <button class="btn-danger" onclick="testDeleteSession()">Delete Session</button>
-                </div>
-            </div>
-
-            <div class="card">
-                <h2>🎤 Audio Recording</h2>
-                <div id="recordingStatus" class="status disconnected">⏹️ Not Recording</div>
-                <div class="button-group">
-                    <button class="btn-success" onclick="startRecording()">Start Recording</button>
-                    <button class="btn-danger" onclick="stopRecording()">Stop Recording</button>
-                </div>
-            </div>
-        </div>
-
-        <div class="card">
-            <h2>📝 Live Transcript</h2>
-            <div id="transcriptContainer">
-                <p style="color: #718096;">Transcripts will appear here...</p>
-            </div>
-        </div>
-
-        <div class="card">
-            <h2>📊 Activity Log</h2>
-            <button class="btn-danger" onclick="clearLogs()" style="margin-bottom: 10px;">Clear Logs</button>
-            <div id="logContainer" class="log-container"></div>
-        </div>
+  <div class="wrap">
+    <div class="header panel">
+      <h1>🎙️ EchoAI Backend Test Dashboard</h1>
+      <div class="meta">Comprehensive test client — JSON `audio_chunk` (base64) mode. Use this to validate your entire pipeline (transcription, emotion, summary, insights).</div>
     </div>
 
-    <script>
-        const BASE_URL = 'http://localhost:8000';
-        const WS_URL = 'ws://localhost:8000';
+    <!-- LEFT: Controls + Transcript -->
+    <div class="panel">
+      <div class="grid2">
+        <div>
+          <div class="field">
+            <label>Session ID</label>
+            <input id="sessionId" type="text" value="test-session-001"/>
+          </div>
 
-        let ws = null;
-        let isRecording = false;
-        let heartbeatInterval = null;
-        let audioContext = null;
-        let processor = null;
-        let source = null;
-        let stream = null;
+          <div class="field">
+            <label>User / Participant</label>
+            <input id="userId" type="text" value="test-user-001" />
+          </div>
 
-        function log(message, type = 'info') {
-            const logContainer = document.getElementById('logContainer');
-            const timestamp = new Date().toLocaleTimeString();
-            const entry = document.createElement('div');
-            entry.className = `log-entry ${type}`;
-            entry.textContent = `[${timestamp}] ${message}`;
-            logContainer.appendChild(entry);
-            logContainer.scrollTop = logContainer.scrollHeight;
+          <div class="field">
+            <label>Chunk interval (ms)</label>
+            <input id="chunkMs" type="text" value="5000" />
+            <div class="meta">Lower → faster but more CPU & bandwidth. Default 1200ms works well.</div>
+          </div>
+        </div>
+
+        <div>
+          <div class="field">
+            <label>Backend URLs</label>
+            <input id="baseUrl" type="text" value="http://localhost:8000" />
+            <div style="height:8px"></div>
+            <input id="wsBase" type="text" value="ws://localhost:8000" />
+          </div>
+
+          <div class="field">
+            <label>Recording Options</label>
+            <select id="audioPreset">
+              <option value="mono16">Mono 16kHz (Recommended)</option>
+              <option value="mono48">Mono 48kHz (higher quality)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <hr style="margin:12px 0"/>
+
+      <div class="row" style="margin-bottom:12px">
+        <div id="connStatus" class="status disconnected">❌ Disconnected</div>
+        <div style="flex:1"></div>
+        <button class="btn small" onclick="connectWS()">Connect WS</button>
+        <button class="btn-ghost small" onclick="disconnectWS()">Disconnect</button>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button class="small btn" onclick="createSession()">Create Session</button>
+        <button class="small btn" onclick="listSessions()">List Sessions</button>
+        <button class="small btn" onclick="getTranscript()">Get Transcript</button>
+        <button class="small btn" onclick="exportTranscript()">Export (Download)</button>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button class="small btn" onclick="startRecording()">Start Recording</button>
+        <button class="small btn-ghost" onclick="stopRecording()">Stop Recording</button>
+        <button class="small btn-danger" onclick="deleteSession()">Delete Session</button>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <input id="chatText" type="text" placeholder="Chat message..." style="flex:1;padding:8px;border-radius:8px;border:1px solid #e6eef8" />
+        <button class="small btn-ghost" onclick="sendChat()">Send Chat</button>
+        <button class="small btn" onclick="sendPing()">Ping</button>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button class="small btn" onclick="getSummary()">Get Summary</button>
+        <button class="small btn" onclick="getInsights()">Get Insights</button>
+        <button class="small btn" onclick="getEmotions()">Get Emotions</button>
+        <button class="small btn-danger" onclick="closeSession()">Close Session</button>
+      </div>
+
+      <div style="margin-top:12px">
+        <label>Upload audio file (WAV/OGG/WebM). Will call POST /transcript/process</label>
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <input id="fileInput" type="file" accept="audio/*" />
+          <button class="small btn" onclick="uploadFile()">Upload</button>
+        </div>
+      </div>
+
+      <hr style="margin:12px 0" />
+
+      <div class="row" style="gap:10px;align-items:center">
+        <div><strong>Last WS message:</strong></div>
+        <div id="lastMsg" style="flex:1;color:#334155">—</div>
+      </div>
+
+      <hr style="margin:12px 0" />
+      <div style="display:flex;gap:10px;align-items:center">
+        <div style="flex:1">
+          <label>Manual JSON send (raw)</label>
+          <input id="manualJson" type="text" placeholder='{"type":"get_summary"}' />
+        </div>
+        <button class="small btn-ghost" onclick="sendManualJson()">Send</button>
+      </div>
+    </div>
+
+    <!-- RIGHT: Logs + Transcript Viewer -->
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div><strong>Live Transcript</strong> <span class="badge" id="entryCount">0</span></div>
+        <div class="meta">Realtime entries will show here</div>
+      </div>
+
+      <div id="transcripts" class="transcripts"></div>
+
+      <hr style="margin:12px 0" />
+
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div><strong>Activity Log</strong></div>
+        <div class="meta">Autoscroll</div>
+      </div>
+      <div id="log" class="log" role="log" aria-live="polite"></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="small btn-ghost" onclick="clearLog()">Clear</button>
+        <button class="small btn" onclick="downloadLogs()">Download Logs</button>
+      </div>
+    </div>
+
+    <div class="footer panel">
+      <div><strong>Notes:</strong> This client uses JSON `audio_chunk` messages where `audio_data` is base64-encoded PCM16LE.</div>
+      <div style="margin-top:6px">If you later switch to raw binary frames, update both frontend and backend accordingly.</div>
+    </div>
+  </div>
+
+<script>
+/* ---------------------------
+   Config & State
+   --------------------------- */
+const defaultChunkMs = 1200;
+let ws = null;
+let reconnectTimer = null;
+let reconnectAttempts = 0;
+const maxReconnect = 6;
+let heartbeatTimer = null;
+
+let audioContext = null;
+let sourceNode = null;
+let processorNode = null;
+let mediaStream = null;
+let isRecording = false;
+let chunkMs = defaultChunkMs;
+
+/* ---------------------------
+   Helpers
+   --------------------------- */
+function log(msg, type='info') {
+  const el = document.getElementById('log');
+  const time = new Date().toLocaleTimeString();
+  const div = document.createElement('div');
+  div.textContent = `[${time}] ${msg}`;
+  if (type === 'error') div.style.color = '#fecaca';
+  else if (type === 'success') div.style.color = '#bbf7d0';
+  else div.style.color = '#cbd5e1';
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+  console.debug(msg);
+}
+
+function setConnStatus(connected) {
+  const s = document.getElementById('connStatus');
+  if (connected) {
+    s.className = 'status connected';
+    s.textContent = '✅ Connected';
+  } else {
+    s.className = 'status disconnected';
+    s.textContent = '❌ Disconnected';
+  }
+}
+
+/* ---------------------------
+   WebSocket Connect / Reconnect
+   --------------------------- */
+function buildWsUrl() {
+  const wsBase = document.getElementById('wsBase').value.trim() || 'ws://localhost:8000';
+  const sessionId = encodeURIComponent(document.getElementById('sessionId').value.trim() || 'test-session-001');
+  return `${wsBase}/transcript/ws/${sessionId}`;
+}
+
+function connectWS() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    log('Already connected', 'info');
+    return;
+  }
+  const url = buildWsUrl();
+  log(`Connecting to ${url}`, 'info');
+
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    log('WebSocket open', 'success');
+    document.getElementById('lastMsg').textContent = 'connected';
+    setConnStatus(true);
+    reconnectAttempts = 0;
+
+    // heartbeat ping (15s)
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        sendJson({type:'ping'});
+        log('Sent heartbeat ping', 'info');
+      }
+    }, 15000);
+  };
+
+  ws.onmessage = (evt) => {
+    // backbone: server sends JSON for transcript entries and other events
+    try {
+      const data = JSON.parse(evt.data);
+      document.getElementById('lastMsg').textContent = data.type || 'unknown';
+      handleWsMessage(data);
+    } catch (e) {
+      // not JSON — log raw
+      log('Received non-JSON message', 'info');
+      const raw = evt.data;
+      const el = document.getElementById('lastMsg');
+      el.textContent = 'raw-binary';
+      log(`Raw message length: ${raw.byteLength || raw.length}`, 'info');
+    }
+  };
+
+  ws.onerror = (err) => {
+    log('WebSocket error', 'error');
+  };
+
+  ws.onclose = (evt) => {
+    setConnStatus(false);
+    log(`WebSocket closed (code=${evt.code})`, 'info');
+    if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+    // simple reconnect with backoff
+    if (reconnectAttempts < maxReconnect) {
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+      reconnectAttempts++;
+      log(`Reconnecting in ${delay}ms...`, 'info');
+      reconnectTimer = setTimeout(connectWS, delay);
+    } else {
+      log('Max reconnect attempts reached', 'error');
+    }
+  };
+}
+
+function disconnectWS() {
+  if (!ws) return;
+  try {
+    ws.close(1000, 'client disconnect');
+    ws = null;
+    setConnStatus(false);
+    if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+    log('Disconnected WebSocket', 'info');
+  } catch (e) {
+    log('Error closing WS: ' + e.message, 'error');
+  }
+}
+
+function sendJson(obj) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    log('WebSocket not open', 'error'); return false;
+  }
+  try {
+    ws.send(JSON.stringify(obj));
+    return true;
+  } catch (e) {
+    log('Send failed: '+e.message,'error'); return false;
+  }
+}
+
+function handleWsMessage(data) {
+  log(`WS ⟵ ${data.type}`, 'info');
+  document.getElementById('lastMsg').textContent = data.type;
+  if (data.type === 'transcript_entry' || data.type === 'listening' || data.type === 'no_speech') {
+    displayTranscript(data.data || data);
+  } else if (data.type === 'pong') {
+    log('Pong received', 'success');
+  } else if (data.type === 'summary') {
+    log('Summary received', 'info');
+    showModal('Summary', JSON.stringify(data.data, null, 2));
+  } else if (data.type === 'error') {
+    log('Server error: ' + (data.message || JSON.stringify(data)), 'error');
+  } else {
+    // log other types
+    log(JSON.stringify(data), 'info');
+  }
+}
+
+/* ---------------------------
+   Transcript UI
+   --------------------------- */
+function displayTranscript(entry) {
+  const container = document.getElementById('transcripts');
+  // support both dict or array
+  const el = document.createElement('div');
+  el.className = 'transcript-item';
+  const speaker = entry.speaker || entry.participant_id || 'Unknown';
+  const text = entry.text || entry.message || '(no text)';
+  const ts = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
+  el.innerHTML = `<div style="font-weight:700;color:#0f1724">${speaker}</div>
+                  <div style="margin-top:6px">${escapeHtml(text)}</div>
+                  <div style="margin-top:8px;font-size:12px;color:#64748b">confidence:${(entry.confidence||0).toFixed(2)} • ${entry.emotion ? 'emotion:'+entry.emotion : ''} • ${ts}</div>`;
+  container.insertBefore(el, container.firstChild);
+
+  // update count
+  const count = container.querySelectorAll('.transcript-item').length;
+  document.getElementById('entryCount').textContent = count;
+}
+
+/* ---------------------------
+   Small util: escapeHtml
+   --------------------------- */
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/[&<>"'`=\/]/g, function(s) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','/':'&#x2F;','`':'&#x60;','=':'&#x3D;'}[s];
+  });
+}
+
+/* ---------------------------
+   Recording (base64 PCM chunks)
+   --------------------------- */
+async function startRecording() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    log('Please connect WS first', 'error'); return;
+  }
+  if (isRecording) { log('Already recording','info'); return; }
+
+  chunkMs = parseInt(document.getElementById('chunkMs').value) || 1200;
+  const preset = document.getElementById('audioPreset').value;
+  const desiredSampleRate = (preset === 'mono48') ? 48000 : 16000;
+
+  try {
+    mediaConstraints = {
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+        sampleRate: desiredSampleRate
+      }
+    };
+    mediaStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+  } catch (e) {
+    log('getUserMedia failed: ' + e.message, 'error'); return;
+  }
+
+  try {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: desiredSampleRate });
+    sourceNode = audioContext.createMediaStreamSource(mediaStream);
+
+    // Use ScriptProcessor (widely supported) with bufferSize = 4096
+    processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+
+    // accumulate frames to form chunk length
+    let buffer = [];
+    let bufferSamples = 0;
+    const samplesPerChunk = Math.round(desiredSampleRate * (chunkMs/1000));
+
+    processorNode.onaudioprocess = (e) => {
+      if (!isRecording) return;
+      const input = e.inputBuffer.getChannelData(0);
+      // copy
+      const copy = new Float32Array(input.length);
+      copy.set(input);
+      buffer.push(copy);
+      bufferSamples += copy.length;
+
+      if (bufferSamples >= samplesPerChunk) {
+        // combine
+        const out = new Float32Array(bufferSamples);
+        let offset = 0;
+        for (const part of buffer) {
+          out.set(part, offset);
+          offset += part.length;
         }
+        buffer = [];
+        bufferSamples = 0;
 
-        function clearLogs() {
-            document.getElementById('logContainer').innerHTML = '';
-        }
+        // float32 -> int16 PCM
+        const int16 = floatTo16BitPCM(out);
 
-        function connectWebSocket() {
-            const sessionId = document.getElementById('sessionId').value;
-            if (!sessionId) {
-                log('Please enter a session ID', 'error');
-                return;
-            }
+        // base64 encode
+        const base64 = uint8ToBase64(new Uint8Array(int16.buffer));
 
-            log(`Connecting to WebSocket for session: ${sessionId}`, 'info');
-            ws = new WebSocket(`${WS_URL}/transcript/ws/${sessionId}`);
+        // send JSON audio_chunk
+        const payload = {
+          type: 'audio_chunk',
+          audio_data: base64,
+          sample_rate: desiredSampleRate
+        };
 
-            ws.onopen = () => {
-                log('✅ WebSocket connected', 'success');
-                updateConnectionStatus(true);
-                ws.send(JSON.stringify({ type: 'ping' }));
-                
-                heartbeatInterval = setInterval(() => {
-                    if (ws && ws.readyState === WebSocket.OPEN) {
-                        ws.send(JSON.stringify({ type: 'ping' }));
-                        log('📡 Heartbeat ping', 'info');
-                    }
-                }, 15000);
-            };
+        sendJson(payload);
+        log(`Sent audio_chunk (${Math.round(out.length/desiredSampleRate*1000)}ms)`, 'info');
+      }
+    };
 
-            ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                log(`Received: ${data.type}`, 'info');
-                handleWebSocketMessage(data);
-            };
+    sourceNode.connect(processorNode);
+    processorNode.connect(audioContext.destination);
 
-            ws.onerror = (error) => {
-                log(`❌ WebSocket error: ${error.message || 'Unknown error'}`, 'error');
-            };
+    isRecording = true;
+    log('Recording started', 'success');
+    document.querySelectorAll('#recordBtn, #stopBtn');
+  } catch (e) {
+    log('Recording setup failed: ' + e.message, 'error');
+    stopRecording();
+  }
+}
 
-            ws.onclose = () => {
-                log('WebSocket disconnected', 'info');
-                updateConnectionStatus(false);
-                if (heartbeatInterval) {
-                    clearInterval(heartbeatInterval);
-                    heartbeatInterval = null;
-                }
-            };
-        }
+function stopRecording() {
+  if (!isRecording) { log('Not recording', 'info'); return; }
+  isRecording = false;
+  try {
+    if (processorNode) { processorNode.disconnect(); processorNode.onaudioprocess = null; processorNode = null; }
+    if (sourceNode) { sourceNode.disconnect(); sourceNode = null; }
+    if (audioContext) { audioContext.close(); audioContext = null; }
+    if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+    log('Recording stopped','info');
+  } catch (e) {
+    log('Stop recording error: '+e.message,'error');
+  }
+}
 
-        function disconnectWebSocket() {
-            if (heartbeatInterval) {
-                clearInterval(heartbeatInterval);
-                heartbeatInterval = null;
-            }
-            if (ws) {
-                ws.close();
-                ws = null;
-            }
-        }
+/* convert Float32Array [-1..1] to Int16Array */
+function floatTo16BitPCM(float32Array) {
+  const l = float32Array.length;
+  const int16 = new Int16Array(l);
+  for (let i = 0; i < l; i++) {
+    let s = Math.max(-1, Math.min(1, float32Array[i]));
+    int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  return int16;
+}
 
-        function updateConnectionStatus(connected) {
-            const status = document.getElementById('connectionStatus');
-            if (connected) {
-                status.className = 'status connected';
-                status.textContent = '✅ Connected';
-            } else {
-                status.className = 'status disconnected';
-                status.textContent = '❌ Disconnected';
-            }
-        }
+/* base64 helper for Uint8Array */
+function uint8ToBase64(u8) {
+  // chunk if large (avoid stack blow)
+  const CHUNK = 0x8000;
+  let result = '';
+  for (let i = 0; i < u8.length; i += CHUNK) {
+    const slice = u8.subarray(i, i + CHUNK);
+    result += String.fromCharCode.apply(null, slice);
+  }
+  return btoa(result);
+}
 
-        function handleWebSocketMessage(data) {
-            if (data.type === 'transcript_entry') {
-                displayTranscript(data.data);
-            } else if (data.type === 'pong') {
-                log('Pong received', 'success');
-            }
-        }
+/* ---------------------------
+   REST API helpers
+   --------------------------- */
+function getBaseUrl() { return document.getElementById('baseUrl').value.trim() || 'http://localhost:8000'; }
+function getSessionId() { return document.getElementById('sessionId').value.trim() || 'test-session-001'; }
 
-        function displayTranscript(entry) {
-            const container = document.getElementById('transcriptContainer');
-            if (container.querySelector('p')) {
-                container.innerHTML = '';
-            }
+async function createSession() {
+  const id = getSessionId();
+  try {
+    const res = await fetch(`${getBaseUrl()}/transcript/session/${encodeURIComponent(id)}/create`, {method:'POST'});
+    const data = await res.json();
+    log(`Create session: ${data.status || 'ok'}`, 'success');
+  } catch (e) { log('Create session failed: '+e.message,'error') }
+}
 
-            const transcriptDiv = document.createElement('div');
-            transcriptDiv.className = 'transcript-entry';
-            transcriptDiv.innerHTML = `
-                <div class="speaker">${entry.speaker || 'Unknown'}</div>
-                <div class="text">${entry.text || '(No text detected)'}</div>
-                <div class="meta">
-                    Confidence: ${((entry.confidence || 0) * 100).toFixed(1)}% | 
-                    ${entry.emotion ? `Emotion: ${entry.emotion}` : 'No emotion'} | 
-                    ${new Date(entry.timestamp).toLocaleTimeString()}
-                </div>
-            `;
+async function listSessions() {
+  try {
+    const res = await fetch(`${getBaseUrl()}/transcript/sessions`);
+    const data = await res.json();
+    log('Active sessions: ' + JSON.stringify(data), 'info');
+  } catch (e) { log('List sessions failed: '+e.message,'error') }
+}
 
-            container.insertBefore(transcriptDiv, container.firstChild);
-            log(`Transcript: "${(entry.text || '(empty)').substring(0, 50)}..."`, 'success');
-        }
+async function getTranscript() {
+  const id = getSessionId();
+  try {
+    const res = await fetch(`${getBaseUrl()}/transcript/session/${encodeURIComponent(id)}`);
+    const data = await res.json();
+    log(`Transcript fetched: entries=${data.total_entries || 0}`, 'success');
+    if (Array.isArray(data.transcript)) {
+      data.transcript.forEach(t => displayTranscript(t));
+    }
+  } catch (e) { log('Get transcript failed: '+e.message,'error') }
+}
 
-        // ✅ NEW: Raw PCM Audio Recording
-        async function startRecording() {
-            if (!ws || ws.readyState !== WebSocket.OPEN) {
-                log('Please connect WebSocket first', 'error');
-                return;
-            }
+async function exportTranscript() {
+  const id = getSessionId();
+  try {
+    const res = await fetch(`${getBaseUrl()}/transcript/session/${encodeURIComponent(id)}`);
+    const json = await res.json();
+    const blob = new Blob([JSON.stringify(json, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `transcript_${id}.json`; a.click();
+    URL.revokeObjectURL(url);
+    log('Transcript exported', 'success');
+  } catch (e) { log('Export failed: '+e.message,'error') }
+}
 
-            try {
-                stream = await navigator.mediaDevices.getUserMedia({
-                    audio: {
-                        echoCancellation: true,
-                        noiseSuppression: true,
-                        autoGainControl: true,
-                        sampleRate: 16000,
-                        channelCount: 1
-                    }
-                });
+async function deleteSession() {
+  const id = getSessionId();
+  if (!confirm(`Delete session ${id}?`)) return;
+  try {
+    const res = await fetch(`${getBaseUrl()}/transcript/session/${encodeURIComponent(id)}`, {method:'DELETE'});
+    const data = await res.json();
+    log('Deleted session', 'success');
+    document.getElementById('transcripts').innerHTML = '';
+    document.getElementById('entryCount').textContent = '0';
+  } catch (e) { log('Delete failed: '+e.message,'error') }
+}
 
-                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-                source = audioContext.createMediaStreamSource(stream);
-                processor = audioContext.createScriptProcessor(4096, 1, 1);
+async function uploadFile() {
+  const fileEl = document.getElementById('fileInput');
+  if (!fileEl.files || fileEl.files.length === 0) { log('No file selected','error'); return; }
+  const file = fileEl.files[0];
+  const id = getSessionId();
+  const form = new FormData();
+  form.append('file', file);
+  form.append('session_id', id);
 
-                source.connect(processor);
-                processor.connect(audioContext.destination);
+  try {
+    const res = await fetch(`${getBaseUrl()}/transcript/process`, { method:'POST', body: form });
+    const data = await res.json();
+    log('File uploaded -> processed: ' + JSON.stringify(data), 'success');
+    if (data.results) {
+      (Array.isArray(data.results) ? data.results : [data.results]).forEach(r => displayTranscript(r));
+    }
+  } catch (e) { log('Upload failed: '+e.message,'error') }
+}
 
-                processor.onaudioprocess = (e) => {
-                    if (ws && ws.readyState === WebSocket.OPEN && isRecording) {
-                        const inputData = e.inputBuffer.getChannelData(0);
-                        
-                        // Convert Float32 to Int16
-                        const int16Data = new Int16Array(inputData.length);
-                        for (let i = 0; i < inputData.length; i++) {
-                            const s = Math.max(-1, Math.min(1, inputData[i]));
-                            int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-                        }
-                        
-                        const base64Audio = btoa(String.fromCharCode(...new Uint8Array(int16Data.buffer)));
-                        
-                        ws.send(JSON.stringify({
-                            type: 'audio_chunk',
-                            audio_data: base64Audio,
-                            sample_rate: 16000
-                        }));
-                        
-                        log('Sent PCM audio chunk', 'info');
-                    }
-                };
+async function sendChat() {
+  const text = document.getElementById('chatText').value.trim();
+  if (!text) { log('Enter chat message','error'); return; }
+  const payload = { type: 'chat', message: text };
+  sendJson(payload);
+  log('Sent chat', 'info');
+}
 
-                isRecording = true;
-                updateRecordingStatus(true);
-                log('🎤 Recording started (PCM format - speak now!)', 'success');
+function sendPing() { sendJson({type:'ping'}); log('Sent ping','info'); }
 
-            } catch (error) {
-                log(`Failed to start recording: ${error.message}`, 'error');
-            }
-        }
+function sendManualJson() {
+  const raw = document.getElementById('manualJson').value;
+  if (!raw) return;
+  try {
+    const obj = JSON.parse(raw);
+    sendJson(obj);
+    log('Sent manual JSON','info');
+  } catch (e) {
+    log('Invalid JSON: ' + e.message,'error');
+  }
+}
 
-        function stopRecording() {
-            if (isRecording) {
-                isRecording = false;
-                
-                if (processor) {
-                    processor.disconnect();
-                    processor = null;
-                }
-                if (source) {
-                    source.disconnect();
-                    source = null;
-                }
-                if (audioContext) {
-                    audioContext.close();
-                    audioContext = null;
-                }
-                if (stream) {
-                    stream.getTracks().forEach(track => track.stop());
-                    stream = null;
-                }
-                
-                updateRecordingStatus(false);
-                log('⏹️ Recording stopped', 'info');
-            }
-        }
+/* ---------------------------
+   Summary / insights / emotions / close
+   --------------------------- */
+async function getSummary() {
+  const id = getSessionId();
+  try {
+    const res = await fetch(`${getBaseUrl()}/transcript/session/${encodeURIComponent(id)}/summary`);
+    const data = await res.json();
+    log('Summary: ' + JSON.stringify(data), 'info');
+    showModal('Summary', JSON.stringify(data, null, 2));
+  } catch (e) { log('Get summary failed: '+e.message,'error') }
+}
 
-        function updateRecordingStatus(recording) {
-            const status = document.getElementById('recordingStatus');
-            if (recording) {
-                status.className = 'status processing';
-                status.textContent = '🎤 Recording...';
-            } else {
-                status.className = 'status disconnected';
-                status.textContent = '⏹️ Not Recording';
-            }
-        }
+async function getInsights() {
+  const id = getSessionId();
+  try {
+    const res = await fetch(`${getBaseUrl()}/transcript/session/${encodeURIComponent(id)}/insights`);
+    const data = await res.json();
+    log('Insights: ' + JSON.stringify(data), 'info');
+    showModal('Insights', JSON.stringify(data, null, 2));
+  } catch (e) { log('Get insights failed: '+e.message,'error') }
+}
 
-        async function testHealth() {
-            log('Testing health endpoint...', 'info');
-            try {
-                const response = await fetch(`${BASE_URL}/health`);
-                const data = await response.json();
-                log(`✅ Health check: ${data.status}`, 'success');
-            } catch (error) {
-                log(`❌ Health check failed: ${error.message}`, 'error');
-            }
-        }
+async function getEmotions() {
+  const id = getSessionId();
+  try {
+    const res = await fetch(`${getBaseUrl()}/transcript/session/${encodeURIComponent(id)}/emotions`);
+    const data = await res.json();
+    log('Emotions: ' + JSON.stringify(data), 'info');
+    showModal('Emotions', JSON.stringify(data, null, 2));
+  } catch (e) { log('Get emotions failed: '+e.message,'error') }
+}
 
-        async function testCreateSession() {
-            const sessionId = document.getElementById('sessionId').value;
-            log(`Creating session: ${sessionId}`, 'info');
-            try {
-                const response = await fetch(`${BASE_URL}/transcript/session/${sessionId}/create`, {
-                    method: 'POST'
-                });
-                const data = await response.json();
-                log(`✅ Session created: ${data.session_id || sessionId}`, 'success');
-            } catch (error) {
-                log(`❌ Failed to create session: ${error.message}`, 'error');
-            }
-        }
+async function closeSession() {
+  const id = getSessionId();
+  try {
+    const res = await fetch(`${getBaseUrl()}/transcript/session/${encodeURIComponent(id)}/close`, {method:'POST'});
+    const data = await res.json();
+    log('Session closed: ' + JSON.stringify(data), 'info');
+    showModal('Session closed', JSON.stringify(data, null, 2));
+  } catch (e) { log('Close failed: '+e.message,'error') }
+}
 
-        async function testGetTranscript() {
-            const sessionId = document.getElementById('sessionId').value;
-            log(`Getting transcript for: ${sessionId}`, 'info');
-            try {
-                const response = await fetch(`${BASE_URL}/transcript/session/${sessionId}`);
-                const data = await response.json();
-                log(`✅ Transcript retrieved: ${data.total_entries || 0} entries`, 'success');
-                
-                if (data.transcript && data.transcript.length > 0) {
-                    data.transcript.forEach((entry, index) => {
-                        log(`  Entry ${index + 1}: "${entry.text || '(empty)'}"`, 'info');
-                    });
-                }
-            } catch (error) {
-                log(`❌ Failed to get transcript: ${error.message}`, 'error');
-            }
-        }
+/* ---------------------------
+   UI modals & logs
+   --------------------------- */
+function showModal(title, body) {
+  // small modal using window.open (quick)
+  const w = window.open('', '_blank', 'width=700,height=500,scrollbars=yes');
+  w.document.write(`<pre style="white-space:pre-wrap;font-family:monospace">${escapeHtml(body)}</pre>`);
+  w.document.title = title;
+}
 
-        async function testDeleteSession() {
-            const sessionId = document.getElementById('sessionId').value;
-            if (!confirm(`Delete session ${sessionId}?`)) return;
+function clearLog() { document.getElementById('log').innerHTML = ''; }
+function downloadLogs() {
+  const blob = new Blob([document.getElementById('log').innerText], {type:'text/plain'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'echoai_logs.txt'; a.click();
+}
 
-            log(`Deleting session: ${sessionId}`, 'info');
-            try {
-                const response = await fetch(`${BASE_URL}/transcript/session/${sessionId}`, {
-                    method: 'DELETE'
-                });
-                const data = await response.json();
-                log(`✅ Session deleted`, 'success');
-                document.getElementById('transcriptContainer').innerHTML = '<p style="color: #718096;">Transcripts will appear here...</p>';
-            } catch (error) {
-                log(`❌ Failed to delete session: ${error.message}`, 'error');
-            }
-        }
+/* ---------------------------
+   Utilities: safe JSON send
+   --------------------------- */
+window.addEventListener('beforeunload', () => {
+  try { if (ws) ws.close(); } catch(e){}
+});
 
-        log('Test client ready. PCM audio recording enabled!', 'info');
-        log('💡 Tip: Speak LOUDLY and CLEARLY into your microphone', 'info');
-    </script>
+/* ---------------------------
+   Init
+   --------------------------- */
+log('EchoAI Test Client ready — using JSON base64 audio_chunk mode', 'info');
+
+</script>
 </body>
 </html>

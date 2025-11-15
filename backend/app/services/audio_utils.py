@@ -9,55 +9,71 @@ import struct
 import logging
 import numpy as np
 from typing import Tuple
+import soundfile as sf
+
 
 logger = logging.getLogger(__name__)
 
 
 def bytes_to_numpy(audio_bytes: bytes, sample_rate: int = 16000) -> np.ndarray:
     """
-    Convert audio bytes to numpy array, handling various formats.
+    Convert raw PCM16 bytes → numpy float32.
+    Fallback to SoundFile ONLY if PCM decoding is not valid.
     """
+
     try:
-        # Try direct PCM conversion first
-        if len(audio_bytes) % 2 == 1:
-            logger.warning(f"Odd-sized audio buffer ({len(audio_bytes)} bytes), truncating last byte")
-            audio_bytes = audio_bytes[:-1]
-        
-        if len(audio_bytes) == 0:
-            logger.warning("Empty audio buffer after processing")
+        # -----------------------------------------
+        # 0. Basic checks
+        # -----------------------------------------
+        if not audio_bytes or len(audio_bytes) == 0:
+            logger.warning("Empty audio buffer")
             return np.array([], dtype=np.float32)
-        
-        # ✅ Try soundfile first (handles WebM/Opus)
+
+        # PCM MUST be even-length for int16
+        if len(audio_bytes) % 2 == 1:
+            logger.warning(f"Odd byte count {len(audio_bytes)}, trimming last byte")
+            audio_bytes = audio_bytes[:-1]
+
+        # -----------------------------------------
+        # 1. TRY RAW PCM FIRST (BEST & FASTEST)
+        # -----------------------------------------
         try:
-            import io
+            pcm = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+
+            if pcm.size > 0:
+                logger.debug(f"Decoded raw PCM16: {pcm.size} samples @ {sample_rate}Hz")
+                return pcm
+        except Exception as e_pcm:
+            logger.debug(f"PCM decode failed: {e_pcm}")
+
+        # -----------------------------------------
+        # 2. FALLBACK: Try SoundFile (WAV/OGG/MP3/WebM)
+        # -----------------------------------------
+        try:
             audio_io = io.BytesIO(audio_bytes)
             audio_array, actual_sr = sf.read(audio_io, dtype="float32", always_2d=False)
-            
-            if audio_array.ndim > 1:  # Convert stereo to mono
+
+            # stereo → mono
+            if audio_array.ndim > 1:
                 audio_array = np.mean(audio_array, axis=1)
-            
+
             # Resample if needed
             if actual_sr != sample_rate:
                 import librosa
                 audio_array = librosa.resample(audio_array, orig_sr=actual_sr, target_sr=sample_rate)
-            
-            logger.info(f"✅ Decoded audio: {len(audio_array)} samples at {sample_rate}Hz")
+
+            logger.debug(f"Decoded using SoundFile: {len(audio_array)} samples @ {sample_rate}Hz")
             return audio_array
-            
-        except Exception as sf_error:
-            logger.debug(f"SoundFile decode failed: {sf_error}, trying raw PCM")
-            
-            # Fallback: Try raw PCM int16
-            try:
-                audio_array = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-                logger.info(f"✅ Decoded as PCM: {len(audio_array)} samples")
-                return audio_array
-            except Exception as pcm_error:
-                logger.error(f"All audio decode methods failed: {pcm_error}")
-                return np.array([], dtype=np.float32)
-    
+
+        except Exception as e_sf:
+            logger.error(f"SoundFile fallback decode failed: {e_sf}")
+
+        # If all fail
+        logger.error("Audio decode failed (PCM + SoundFile). Returning empty.")
+        return np.array([], dtype=np.float32)
+
     except Exception as e:
-        logger.error(f"Audio conversion error: {e}")
+        logger.error(f"Unexpected audio conversion error: {e}")
         return np.array([], dtype=np.float32)
 
 
@@ -100,7 +116,6 @@ def _bytes_to_numpy_wav(audio_bytes: bytes, target_sr: int) -> Tuple[np.ndarray,
 
 def _bytes_to_numpy_soundfile(audio_bytes: bytes, target_sr: int) -> Tuple[np.ndarray, int]:
     """Convert audio bytes using soundfile library."""
-    import soundfile as sf
     
     audio_io = io.BytesIO(audio_bytes)
     audio_array, sample_rate = sf.read(audio_io, dtype='float32')
