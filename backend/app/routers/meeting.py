@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.services.meeting_room_manager import (
@@ -28,6 +29,7 @@ from app.services.task_assignment import get_task_assignment_engine
 from app.services.summary_service import get_summary_service
 from app.services.audio_utils import bytes_to_numpy
 from app.modules.realtime_store import get_transcript_store
+from app.modules.audio_recorder import get_or_create_recorder, get_recorder, delete_recorder
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/meeting", tags=["Multi-User Meetings"])
@@ -153,6 +155,12 @@ async def end_meeting_room(room_id: str, ended_by: str = Query(...)):
         if not room:
             raise HTTPException(status_code=404, detail="Room not found")
 
+        # Stop recording if active
+        recorder = get_recorder(room_id)
+        if recorder and recorder.is_recording:
+            recorder.stop_recording()
+            logger.info(f"Stopped recording for room {room_id}")
+
         await room_manager.end_room(room_id, ended_by)
 
         # Also delete from store (if exists)
@@ -166,7 +174,8 @@ async def end_meeting_room(room_id: str, ended_by: str = Query(...)):
 
         return {
             "success": True,
-            "message": f"Room {room_id} ended successfully"
+            "message": f"Room {room_id} ended successfully",
+            "recording_available": recorder is not None
         }
 
     except HTTPException:
@@ -326,6 +335,195 @@ async def export_meeting_data(room_id: str, format: str = Query("json")):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/rooms/{room_id}/recording/download")
+async def download_meeting_recording(room_id: str):
+    """Download the meeting recording as WAV file."""
+    try:
+        recorder = get_recorder(room_id)
+        
+        if not recorder:
+            raise HTTPException(status_code=404, detail="No recording found for this room")
+        
+        # Stop recording if still active
+        if recorder.is_recording:
+            recorder.stop_recording()
+        
+        # Get WAV bytes
+        wav_bytes = recorder.get_wav_bytes()
+        
+        if not wav_bytes:
+            raise HTTPException(status_code=404, detail="No audio data available")
+        
+        # Return as downloadable file
+        return Response(
+            content=wav_bytes,
+            media_type="audio/wav",
+            headers={
+                "Content-Disposition": f"attachment; filename=meeting_{room_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.wav"
+            }
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading recording: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/rooms/{room_id}/recording/metadata")
+async def get_recording_metadata(room_id: str):
+    """Get metadata about the meeting recording."""
+    try:
+        recorder = get_recorder(room_id)
+        
+        if not recorder:
+            raise HTTPException(status_code=404, detail="No recording found for this room")
+        
+        return recorder.get_metadata()
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting recording metadata: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/rooms/{room_id}/transcript/download")
+async def download_meeting_transcript(room_id: str, format: str = Query("txt", regex="^(txt|json|srt)$")):
+    """
+    Download the meeting transcript in various formats.
+    
+    Args:
+        room_id: Room identifier
+        format: Output format (txt, json, srt)
+    """
+    try:
+        store = get_transcript_store()
+        transcript_entries = store.get_session_transcript(room_id)
+        
+        if not transcript_entries:
+            raise HTTPException(status_code=404, detail="No transcript found for this room")
+        
+        # Generate content based on format
+        if format == "txt":
+            content = _generate_txt_transcript(transcript_entries)
+            media_type = "text/plain"
+            extension = "txt"
+        elif format == "json":
+            content = _generate_json_transcript(transcript_entries)
+            media_type = "application/json"
+            extension = "json"
+        elif format == "srt":
+            content = _generate_srt_transcript(transcript_entries)
+            media_type = "text/plain"
+            extension = "srt"
+        else:
+            raise HTTPException(status_code=400, detail="Invalid format. Use txt, json, or srt")
+        
+        # Return as downloadable file
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f"attachment; filename=transcript_{room_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.{extension}"
+            }
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading transcript: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _generate_txt_transcript(entries) -> str:
+    """Generate plain text transcript."""
+    lines = []
+    lines.append("=" * 80)
+    lines.append("MEETING TRANSCRIPT")
+    lines.append("=" * 80)
+    lines.append("")
+    
+    for entry in entries:
+        timestamp = entry.timestamp.strftime("%H:%M:%S") if hasattr(entry.timestamp, 'strftime') else str(entry.timestamp)
+        speaker = entry.speaker or "Unknown"
+        text = entry.text
+        
+        # Add emotion info if available
+        emotion_str = ""
+        if hasattr(entry, 'emotions') and entry.emotions:
+            emotion = entry.emotions.get('emotion', 'neutral')
+            confidence = entry.emotions.get('confidence', 0)
+            emotion_str = f" [{emotion.upper()} {confidence:.0%}]"
+        
+        lines.append(f"[{timestamp}] {speaker}{emotion_str}:")
+        lines.append(f"  {text}")
+        lines.append("")
+    
+    return "\n".join(lines)
+
+
+def _generate_json_transcript(entries) -> str:
+    """Generate JSON transcript."""
+    transcript_data = {
+        "transcript": [
+            {
+                "timestamp": entry.timestamp.isoformat() if hasattr(entry.timestamp, 'isoformat') else str(entry.timestamp),
+                "speaker": entry.speaker or "Unknown",
+                "text": entry.text,
+                "confidence": getattr(entry, 'confidence', 1.0),
+                "emotions": getattr(entry, 'emotions', {}) or {}
+            }
+            for entry in entries
+        ],
+        "total_entries": len(entries),
+        "generated_at": datetime.utcnow().isoformat()
+    }
+    
+    return json.dumps(transcript_data, indent=2)
+
+
+def _generate_srt_transcript(entries) -> str:
+    """Generate SRT subtitle format transcript."""
+    lines = []
+    
+    for idx, entry in enumerate(entries, 1):
+        # SRT format:
+        # 1
+        # 00:00:00,000 --> 00:00:05,000
+        # Speaker: Text
+        
+        timestamp = entry.timestamp
+        
+        # Calculate approximate duration (assume 3 seconds per entry if no duration info)
+        duration_seconds = 3
+        
+        # Format timestamps for SRT
+        if hasattr(timestamp, 'strftime'):
+            start_time = timestamp.strftime("%H:%M:%S,000")
+            # Add duration
+            end_timestamp = timestamp
+            try:
+                from datetime import timedelta
+                end_timestamp = timestamp + timedelta(seconds=duration_seconds)
+            except:
+                pass
+            end_time = end_timestamp.strftime("%H:%M:%S,000")
+        else:
+            start_time = "00:00:00,000"
+            end_time = "00:00:03,000"
+        
+        speaker = entry.speaker or "Unknown"
+        text = entry.text
+        
+        lines.append(str(idx))
+        lines.append(f"{start_time} --> {end_time}")
+        lines.append(f"{speaker}: {text}")
+        lines.append("")
+    
+    return "\n".join(lines)
+
+
 # WebSocket for Real-Time Collaboration ---------------------------------------
 
 @router.websocket("/rooms/{room_id}/ws")
@@ -381,6 +579,12 @@ async def meeting_websocket(
 
         logger.info(f"✅ {username} joined {room_id} as {participant.role.value}")
 
+        # Start recording if this is the first participant
+        recorder = get_or_create_recorder(room_id)
+        if not recorder.is_recording:
+            recorder.start_recording()
+            logger.info(f"Started recording for room {room_id}")
+
         # Broadcast a lightweight "new_participant" event to others so they start WebRTC handshake
         # (exclude the newly-joined user)
         await room_manager.broadcast_to_room(room_id, {
@@ -428,16 +632,17 @@ async def meeting_websocket(
             "self": True
         })
 
-        # Main receive loop
+        # Main receive loop with extended timeout for long meetings
+        # Timeout extended to 180 seconds (3 minutes) to support 30+ minute meetings
         while True:
             try:
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=30)
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=180)
             except asyncio.TimeoutError:
-                # send keep-alive ping
+                # send keep-alive ping after 3 minutes of inactivity
                 try:
                     await websocket.send_json({
                         "type": "ping_timeout",
-                        "message": "No message received within 30 seconds. Sending keep-alive ping.",
+                        "message": "Keep-alive: No message received within 180 seconds.",
                         "timestamp": datetime.utcnow().isoformat()
                     })
                 except Exception:
@@ -543,6 +748,16 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
 
         # 2️⃣ Decode base64 → bytes
         audio_bytes = base64.b64decode(audio_base64)
+
+        # 2.5️⃣ Add audio to recorder for meeting recording
+        try:
+            recorder = get_recorder(room_id)
+            if recorder and recorder.is_recording:
+                # Convert bytes to numpy array for recording
+                audio_array = bytes_to_numpy(audio_bytes, sample_rate=16000)
+                recorder.add_audio_chunk(user_id, audio_array)
+        except Exception as rec_err:
+            logger.warning(f"Failed to add audio to recorder: {rec_err}")
 
         # 3️⃣ Run unified AI pipeline via orchestrator
         orchestrator = get_orchestrator_service()

@@ -4,6 +4,7 @@ Production-ready real-time meeting intelligence backend with AI-powered transcri
 
 ## ✨ Features
 
+### Core Features
 - **Real-time Transcription**: Live speech-to-text using WhisperX/Whisper
 - **Speaker Identification**: Automatic speaker detection and tracking
 - **Emotion Analysis**: Real-time emotion detection using GPT-4o-mini
@@ -12,6 +13,15 @@ Production-ready real-time meeting intelligence backend with AI-powered transcri
 - **WebSocket API**: Real-time bidirectional communication
 - **RESTful API**: Complete HTTP API with FastAPI
 - **Production Ready**: Docker support, logging, error handling
+
+### 🆕 New in v3.0
+- **Meeting Recording**: Record and download complete meeting audio as WAV files
+- **Enhanced WebSocket Stability**: Extended timeout (180s) with keep-alive for 30+ minute meetings
+- **Improved Diarization**: Voice Activity Detection with 1.5s silence boundary detection
+- **Multi-format Transcript Export**: Download transcripts in TXT, JSON, or SRT format
+- **Analytics Dashboard**: Fixed `/analytics/sessions/list` endpoint and enhanced session management
+
+📖 **[View Full Documentation](./MEETING_FEATURES.md)** for new features
 
 ## 🚀 Quick Start
 
@@ -426,14 +436,17 @@ MIT License - see LICENSE file for details
 
 ## 🎯 Roadmap
 
+- [x] ~~Meeting recording storage~~ ✅ v3.0
+- [x] ~~Advanced analytics dashboard~~ ✅ v3.0
+- [x] ~~Enhanced speaker diarization~~ ✅ v3.0
 - [ ] Multi-language support
-- [ ] Advanced speaker diarization
 - [ ] Real-time translation
-- [ ] Meeting recording storage
 - [ ] Calendar integration
 - [ ] Mobile app support
-- [ ] Advanced analytics dashboard
 - [ ] AI-powered meeting notes
+- [ ] Video recording support
+- [ ] Real-time captions
+- [ ] Cloud storage integration (S3, Azure Blob)
 
 ## 🙏 Acknowledgments
 

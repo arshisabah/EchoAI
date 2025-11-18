@@ -76,13 +76,61 @@ class TranscriptionService:
 
         logger.error("❌ No transcription models available!")
 
+    def detect_voice_activity(self, audio_array: np.ndarray, sample_rate: int = 16000) -> bool:
+        """
+        Improved Voice Activity Detection (VAD).
+        Returns True if voice activity is detected, False otherwise.
+        """
+        if len(audio_array) == 0:
+            return False
+        
+        # Calculate energy (RMS)
+        energy = np.sqrt(np.mean(audio_array ** 2))
+        
+        # Energy threshold for voice activity
+        energy_threshold = 0.01
+        
+        # Zero crossing rate
+        zero_crossings = np.sum(np.abs(np.diff(np.sign(audio_array)))) / (2 * len(audio_array))
+        
+        # Zero crossing threshold (voice typically has moderate ZCR)
+        zcr_min = 0.01
+        zcr_max = 0.5
+        
+        # Voice activity if energy is sufficient and ZCR is in voice range
+        has_energy = energy > energy_threshold
+        has_voice_zcr = zcr_min < zero_crossings < zcr_max
+        
+        return has_energy and has_voice_zcr
+
+    def detect_silence_boundary(self, audio_array: np.ndarray, sample_rate: int = 16000, 
+                                silence_threshold: float = 1.5) -> bool:
+        """
+        Detect if there's a silence boundary (1.5s default) at the end of audio.
+        This helps wait for speaker to finish before processing.
+        """
+        if len(audio_array) < sample_rate * silence_threshold:
+            return False
+        
+        # Check last 1.5 seconds for silence
+        tail_samples = int(sample_rate * silence_threshold)
+        tail = audio_array[-tail_samples:]
+        
+        # Calculate energy in the tail
+        tail_energy = np.sqrt(np.mean(tail ** 2))
+        
+        # Silence threshold
+        silence_energy_threshold = 0.005
+        
+        return tail_energy < silence_energy_threshold
+
     async def transcribe_chunk(
         self, 
         audio_array: np.ndarray, 
         session_id: str,
         sample_rate: int = 16000
     ) -> List[ASRResult]:
-        """Transcribe audio chunk and return results."""
+        """Transcribe audio chunk and return results with improved VAD."""
         
         # --- Preprocess audio array ---
         if audio_array.ndim > 1:  # Stereo → mono
@@ -91,11 +139,10 @@ class TranscriptionService:
         # Normalize amplitude to [-1, 1]
         audio_array = audio_array / (np.max(np.abs(audio_array)) + 1e-6)
 
-        # Skip silence chunks (mean energy too low)
-        if np.abs(audio_array).mean() < 0.005:
-            logger.debug("Silence detected; skipping chunk.")
+        # Improved Voice Activity Detection
+        if not self.detect_voice_activity(audio_array, sample_rate):
+            logger.debug("No voice activity detected; skipping chunk.")
             return []
-
 
         if len(audio_array) == 0:
             return []
