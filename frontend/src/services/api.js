@@ -93,6 +93,25 @@ export const meetingAPI = {
     const response = await api.get(`/meeting/rooms/${roomId}/export?format=${format}`);
     return response.data;
   },
+
+  downloadRecording: async (roomId) => {
+    const response = await api.get(`/meeting/rooms/${roomId}/recording/download`, {
+      responseType: 'blob'
+    });
+    return response.data;
+  },
+
+  downloadTranscript: async (roomId, format = 'txt') => {
+    const response = await api.get(`/meeting/rooms/${roomId}/transcript/download?format=${format}`, {
+      responseType: 'blob'
+    });
+    return response.data;
+  },
+
+  getRecordingMetadata: async (roomId) => {
+    const response = await api.get(`/meeting/rooms/${roomId}/recording/metadata`);
+    return response.data;
+  },
 };
 
 // Analytics API

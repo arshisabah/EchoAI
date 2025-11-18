@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Video, Users, Clock, TrendingUp } from 'lucide-react';
+import { Plus, Video, Users, Clock, TrendingUp, Download, FileText } from 'lucide-react';
 import { meetingAPI, analyticsAPI } from '../services/api';
 
 const Dashboard = ({ userInfo }) => {
@@ -79,6 +79,40 @@ const Dashboard = ({ userInfo }) => {
     setIsJoining(false);
     setJoinRoomData({ roomName: '', password: '' });
     navigate(`/meeting/rooms/${encodeURIComponent(joinRoomData.roomName)}?password=${encodeURIComponent(joinRoomData.password || "")}`);
+  };
+
+  const handleDownloadRecording = async (sessionId) => {
+    try {
+      const blob = await meetingAPI.downloadRecording(sessionId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `meeting_${sessionId}_${Date.now()}.wav`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download failed:', err);
+      alert('Failed to download recording');
+    }
+  };
+
+  const handleDownloadTranscript = async (sessionId, format = 'txt') => {
+    try {
+      const blob = await meetingAPI.downloadTranscript(sessionId, format);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `transcript_${sessionId}_${Date.now()}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download failed:', err);
+      alert('Failed to download transcript');
+    }
   };
 
   if (loading) {
@@ -303,20 +337,39 @@ const Dashboard = ({ userInfo }) => {
 
       {/* Recent Sessions */}
       <div className="dashboard-section">
-        <h2>Recent Sessions</h2>
+        <h2>Recent Meetings</h2>
         {recentSessions.length === 0 ? (
           <p className="text-muted">No recent sessions</p>
         ) : (
           <div className="sessions-list">
             {recentSessions.slice(0, 5).map((session) => (
-              <div key={session.session_id} className="session-item">
+              <div key={session.session_id} className="session-card">
                 <div className="session-info">
                   <h4>{session.session_id}</h4>
                   <p>{session.speakers?.join(', ') || 'No speakers'}</p>
+                  <div className="session-stats">
+                    <span>{session.total_entries || 0} entries</span>
+                    <span>•</span>
+                    <span>{session.duration_minutes?.toFixed(1) || 0} min</span>
+                  </div>
                 </div>
-                <div className="session-stats">
-                  <span>{session.total_entries || 0} entries</span>
-                  <span>{session.duration_minutes?.toFixed(1) || 0} min</span>
+                <div className="session-actions">
+                  <button 
+                    className="btn-secondary btn-sm"
+                    onClick={() => handleDownloadRecording(session.session_id)}
+                    title="Download Recording"
+                  >
+                    <Download size={16} />
+                    Recording
+                  </button>
+                  <button 
+                    className="btn-secondary btn-sm"
+                    onClick={() => handleDownloadTranscript(session.session_id, 'txt')}
+                    title="Download Transcript"
+                  >
+                    <FileText size={16} />
+                    Transcript
+                  </button>
                 </div>
               </div>
             ))}

@@ -16,6 +16,7 @@ import TranscriptPanel from './Meeting/Transcription';
 import EmotionPanel from './Meeting/EmotionPanel';
 import TaskPanel from './Meeting/TaskPanel';
 import SummaryPanel from './Meeting/SummaryPanel';
+import PostMeetingModal from './Meeting/PostMeetingModal';
 
 const MeetingRoom = ({ userInfo }) => {
 
@@ -33,6 +34,7 @@ const MeetingRoom = ({ userInfo }) => {
   const [emotionGuidance, setEmotionGuidance] = useState(null);
   const [emotionHistory, setEmotionHistory] = useState([]);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [showPostMeetingModal, setShowPostMeetingModal] = useState(false);
 
   console.log("MeetingRoom Loaded → roomId:", roomId, "password:", roomPassword);
 
@@ -179,6 +181,13 @@ const MeetingRoom = ({ userInfo }) => {
     stopRecording();
     stopLocalMedia();
     disconnect();
+    
+    // Show post-meeting modal instead of navigating immediately
+    setShowPostMeetingModal(true);
+  };
+
+  const handleCloseModal = () => {
+    setShowPostMeetingModal(false);
     navigate("/");
   };
 
@@ -313,7 +322,7 @@ const MeetingRoom = ({ userInfo }) => {
           </div>
 
           <div className="panel-content">
-            {activeTab === "transcript" && <TranscriptPanel transcripts={transcripts} onExport={handleExportTranscript} />}
+            {activeTab === "transcript" && <TranscriptPanel transcripts={transcripts} onExport={handleExportTranscript} roomId={roomId} />}
             {activeTab === "chat" && <ChatPanel messages={chatMessages} onSendMessage={sendChatMessage} currentUser={userInfo} />}
             {activeTab === "emotion" && <EmotionPanel currentEmotion={currentEmotion} emotionGuidance={emotionGuidance} emotionHistory={emotionHistory} />}
             {activeTab === "tasks" && <TaskPanel roomId={roomId} currentUser={userInfo} />}
@@ -326,6 +335,13 @@ const MeetingRoom = ({ userInfo }) => {
         <div className="error-banner">
           ⚠️ {wsError || rtcError || recorderError}
         </div>
+      )}
+
+      {showPostMeetingModal && (
+        <PostMeetingModal 
+          roomId={roomId}
+          onClose={handleCloseModal}
+        />
       )}
     </div>
   );
