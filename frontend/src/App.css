@@ -2453,3 +2453,272 @@ body {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+/* ============================================
+   POST-MEETING MODAL
+   ============================================ */
+.post-meeting-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+.post-meeting-content {
+  background: #1e293b;
+  padding: 2rem;
+  border-radius: 12px;
+  max-width: 500px;
+  width: 90%;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
+  animation: slideUp 0.3s ease-out;
+}
+
+.modal-header {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.modal-header h2 {
+  margin-top: 1rem;
+  color: #f8fafc;
+  font-size: 1.5rem;
+}
+
+.loading-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  gap: 1rem;
+}
+
+.loading-section p {
+  color: #94a3b8;
+}
+
+.meeting-metadata {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: #0f172a;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+}
+
+.metadata-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #cbd5e1;
+  font-size: 0.9rem;
+}
+
+.metadata-item svg {
+  color: #64748b;
+}
+
+.download-section {
+  margin: 1.5rem 0;
+}
+
+.download-section h3 {
+  color: #f8fafc;
+  margin-bottom: 1rem;
+  font-size: 1.1rem;
+}
+
+.download-group {
+  margin-bottom: 1.5rem;
+}
+
+.download-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #cbd5e1;
+  margin-bottom: 0.75rem;
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.download-header svg {
+  color: #64748b;
+}
+
+.btn-download {
+  width: 100%;
+  justify-content: center;
+}
+
+.download-buttons {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.message-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  margin: 1rem 0;
+  font-size: 0.875rem;
+}
+
+.message-banner.error {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.message-banner.success {
+  background: #d1fae5;
+  color: #059669;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ============================================
+   TRANSCRIPT EXPORT DROPDOWN
+   ============================================ */
+.export-dropdown {
+  position: relative;
+}
+
+.format-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.5rem;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+  min-width: 150px;
+  z-index: 1000;
+  overflow: hidden;
+}
+
+.format-menu button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: transparent;
+  border: none;
+  color: #cbd5e1;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+}
+
+.format-menu button:hover {
+  background: #334155;
+  color: #f8fafc;
+}
+
+.format-menu button svg {
+  flex-shrink: 0;
+}
+
+/* ============================================
+   SESSION CARDS (DASHBOARD)
+   ============================================ */
+.session-card {
+  background: #1e293b;
+  padding: 1.5rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 1px solid #334155;
+  transition: all 0.2s;
+}
+
+.session-card:hover {
+  border-color: #475569;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+}
+
+.session-card .session-info h4 {
+  color: #f8fafc;
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+}
+
+.session-card .session-info p {
+  color: #94a3b8;
+  font-size: 0.875rem;
+  margin-bottom: 0.5rem;
+}
+
+.session-card .session-stats {
+  display: flex;
+  gap: 0.5rem;
+  color: #64748b;
+  font-size: 0.75rem;
+}
+
+.session-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+/* ============================================
+   RESPONSIVE UPDATES
+   ============================================ */
+@media (max-width: 768px) {
+  .post-meeting-content {
+    width: 95%;
+    padding: 1.5rem;
+  }
+
+  .download-buttons {
+    flex-direction: column;
+  }
+
+  .download-buttons .btn-sm {
+    width: 100%;
+  }
+
+  .session-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
+  .session-actions {
+    width: 100%;
+  }
+
+  .session-actions button {
+    flex: 1;
+  }
+}

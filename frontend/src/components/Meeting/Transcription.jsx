@@ -1,13 +1,62 @@
-import React, { useRef, useEffect } from 'react';
-import { FileText, Download } from 'lucide-react';
+import React, { useRef, useEffect, useState } from 'react';
+import { FileText, Download, ChevronDown } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { meetingAPI } from '../../services/api';
 
-const TranscriptPanel = ({ transcripts, onExport }) => {
+const TranscriptPanel = ({ transcripts, onExport, roomId }) => {
   const transcriptEndRef = useRef(null);
+  const dropdownRef = useRef(null);
+  const [showFormatMenu, setShowFormatMenu] = useState(false);
+  const [downloading, setDownloading] = useState(null);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transcripts]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setShowFormatMenu(false);
+      }
+    };
+
+    if (showFormatMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showFormatMenu]);
+
+  const handleDownloadTranscript = async (format) => {
+    if (!roomId) {
+      console.error('No roomId provided');
+      alert('Cannot download transcript: Room ID not available');
+      return;
+    }
+
+    setDownloading(format);
+    setShowFormatMenu(false);
+
+    try {
+      const blob = await meetingAPI.downloadTranscript(roomId, format);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `transcript_${roomId}_${Date.now()}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download failed:', err);
+      alert('Failed to download transcript');
+    } finally {
+      setDownloading(null);
+    }
+  };
 
   const getEmotionColor = (emotion) => {
     const colors = {
@@ -31,7 +80,45 @@ const TranscriptPanel = ({ transcripts, onExport }) => {
           <h3>Live Transcript</h3>
           <span className="badge">{transcripts.length}</span>
         </div>
-        {transcripts.length > 0 && (
+        {transcripts.length > 0 && roomId && (
+          <div className="export-dropdown" ref={dropdownRef}>
+            <button 
+              className="btn-secondary btn-sm" 
+              onClick={() => setShowFormatMenu(!showFormatMenu)}
+              disabled={downloading}
+            >
+              {downloading ? (
+                <>
+                  <div className="loading-spinner small"></div>
+                  Downloading...
+                </>
+              ) : (
+                <>
+                  <Download size={16} />
+                  Download
+                  <ChevronDown size={14} />
+                </>
+              )}
+            </button>
+            {showFormatMenu && (
+              <div className="format-menu">
+                <button onClick={() => handleDownloadTranscript('txt')}>
+                  <FileText size={14} />
+                  Text (.txt)
+                </button>
+                <button onClick={() => handleDownloadTranscript('json')}>
+                  <FileText size={14} />
+                  JSON (.json)
+                </button>
+                <button onClick={() => handleDownloadTranscript('srt')}>
+                  <FileText size={14} />
+                  Subtitles (.srt)
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {transcripts.length > 0 && !roomId && (
           <button className="btn-secondary btn-sm" onClick={onExport}>
             <Download size={16} />
             Export
