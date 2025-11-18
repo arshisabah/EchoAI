@@ -88,6 +88,7 @@ class MeetingRoom:
             'participant_count': len(self.participants),
             'max_participants': self.max_participants,
             'is_recording': self.is_recording,
+            'has_password': self.password is not None and self.password != "",
             'participants': [p.to_dict() for p in self.participants.values()],
             'metadata': self.metadata or {}
         }

@@ -18,6 +18,7 @@ const Dashboard = ({ userInfo }) => {
     roomName: '',
     password: '',
   });
+  const [passwordPrompt, setPasswordPrompt] = useState({ show: false, roomId: null, hasPassword: false });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -64,8 +65,21 @@ const Dashboard = ({ userInfo }) => {
     }
   };
 
-  const handleJoinRoom = (roomId, roomPassword) => {
-    navigate(`/meeting/rooms/${encodeURIComponent(roomId)}?password=${encodeURIComponent(roomPassword || "")}`);
+  const handleJoinRoom = (roomId, hasPassword) => {
+    if (hasPassword) {
+      // Show password prompt modal
+      setPasswordPrompt({ show: true, roomId, hasPassword: true });
+    } else {
+      // No password required - join directly
+      navigate(`/meeting/rooms/${encodeURIComponent(roomId)}`);
+    }
+  };
+
+  const handlePasswordSubmit = (e) => {
+    e.preventDefault();
+    const password = e.target.password.value;
+    setPasswordPrompt({ show: false, roomId: null, hasPassword: false });
+    navigate(`/meeting/rooms/${encodeURIComponent(passwordPrompt.roomId)}?password=${encodeURIComponent(password)}`);
   };
 
   const handleJoinRoomManually = (e) => {
@@ -325,7 +339,7 @@ const Dashboard = ({ userInfo }) => {
                 </div>
                 <button
                   className="btn-primary btn-block"
-                  onClick={() => handleJoinRoom(room.room_id, room.password)}
+                  onClick={() => handleJoinRoom(room.room_id, room.has_password)}
                 >
                   Join Room
                 </button>
@@ -376,6 +390,36 @@ const Dashboard = ({ userInfo }) => {
           </div>
         )}
       </div>
+
+      {/* Password Prompt Modal */}
+      {passwordPrompt.show && (
+        <div className="modal-overlay" onClick={() => setPasswordPrompt({ show: false, roomId: null, hasPassword: false })}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>🔐 Password Required</h2>
+            <p>This room is password-protected. Please enter the password to join.</p>
+            <form onSubmit={handlePasswordSubmit}>
+              <div className="form-group">
+                <label>Password *</label>
+                <input
+                  type="password"
+                  name="password"
+                  placeholder="Enter room password"
+                  required
+                  autoFocus
+                />
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="btn-secondary" onClick={() => setPasswordPrompt({ show: false, roomId: null, hasPassword: false })}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary">
+                  Join Room
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

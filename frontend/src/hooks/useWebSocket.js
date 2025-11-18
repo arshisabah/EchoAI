@@ -251,6 +251,11 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
     }, []);
 
     const sendAudioChunk = useCallback((audioData, sampleRate = 16000) => {
+        if (wsRef.current?.readyState !== WebSocket.OPEN) {
+            console.warn('⚠️ Cannot send audio - WebSocket not connected');
+            return false;
+        }
+
         // Convert Uint8Array to base64 for JSON transmission
         // Use chunks to avoid call stack issues with large arrays
         let binaryString = '';
@@ -261,10 +266,13 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
         }
         const base64Audio = btoa(binaryString);
         
+        console.log('🎤 Sent audio chunk:', audioData.length, 'bytes');
+        
         return sendMessage({
             type: 'audio_chunk',
-            audio_data: base64Audio,
+            audio: base64Audio,
             sample_rate: sampleRate,
+            is_final: false
         });
     }, [sendMessage]);
 
