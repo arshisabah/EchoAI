@@ -1,6 +1,6 @@
 # app/services/transcription_service.py
 """
-Fixed production-ready transcription service with multiple backends.
+✅ FIXED: Remove hardcoded Speaker_1, let orchestrator assign real participant IDs
 """
 
 import asyncio
@@ -21,13 +21,13 @@ logger = logging.getLogger(__name__)
 
 
 class ASRResult:
-    """Normalized ASR result."""
-    def __init__(self, text="", confidence=1.0, words=None, processing_time_ms=0.0, speaker="Speaker_1"):
+    """Normalized ASR result - ✅ FIXED: speaker is now optional"""
+    def __init__(self, text="", confidence=1.0, words=None, processing_time_ms=0.0, speaker=None):
         self.text = text
         self.confidence = confidence
         self.words = words or []
         self.processing_time_ms = processing_time_ms
-        self.speaker = speaker
+        self.speaker = speaker  # ✅ FIX: Changed from "Speaker_1" default to None
 
 
 class TranscriptionService:
@@ -160,12 +160,13 @@ class TranscriptionService:
                     for word in response.words
                 ]
 
+            # ✅ FIX: Don't assign speaker here - let orchestrator handle it
             return [ASRResult(
                 text=text,
                 confidence=1.0,
                 words=words,
                 processing_time_ms=(time.time() - start_time) * 1000,
-                speaker="Speaker_1"
+                speaker=None  # ✅ Changed from "Speaker_1"
             )]
         except Exception as e:
             logger.error(f"OpenAI API transcription failed: {e}")
@@ -190,12 +191,13 @@ class TranscriptionService:
                 if not text:
                     continue
                     
+                # ✅ FIX: Use speaker from WhisperX if available, otherwise None
                 results.append(ASRResult(
                     text=text,
                     confidence=seg.get("confidence", 1.0),
                     words=seg.get("words"),
                     processing_time_ms=(time.time() - start_time) * 1000,
-                    speaker=seg.get("speaker", "Speaker_1")
+                    speaker=seg.get("speaker")  # ✅ Changed from hardcoded "Speaker_1"
                 ))
             
             return results
@@ -224,12 +226,13 @@ class TranscriptionService:
             if not text:
                 return []
 
+            # ✅ FIX: Don't assign speaker - let orchestrator handle it
             return [ASRResult(
                 text=text,
                 confidence=1.0,
                 words=[],
                 processing_time_ms=(time.time() - start_time) * 1000,
-                speaker="Speaker_1"
+                speaker=None  # ✅ Changed from "Speaker_1"
             )]
         except Exception as e:
             logger.error(f"Whisper transcription failed: {e}")
@@ -305,7 +308,7 @@ async def process_audio_chunk(
                 "session_id": session_id,
                 "timestamp": datetime.utcnow().isoformat(),
                 "text": seg.text,
-                "speaker": seg.speaker,
+                "speaker": seg.speaker,  # ✅ Now None or real speaker from WhisperX
                 "confidence": float(seg.confidence),
                 "word_count": len(seg.text.split()),
                 "processing_time_ms": float(seg.processing_time_ms),

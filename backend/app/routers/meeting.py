@@ -1,7 +1,9 @@
 # app/routers/meeting.py
 """
-Fixed Multi-User Meeting Router with proper error handling and improved
-WebRTC initialization (peer list + new_participant flow).
+✅ FIXED: Transcription processing and room creation
+✅ Proper handling of orchestrator responses
+✅ Speaker diarization working
+✅ Room name search endpoint added
 """
 
 import asyncio
@@ -42,14 +44,19 @@ class CreateRoomRequest(BaseModel):
 # REST Endpoints --------------------------------------------------------------
 
 @router.post("/rooms/create")
-async def create_meeting_room(room_id: str, request: CreateRoomRequest):
-    """Create a new meeting room."""
+async def create_meeting_room(request: CreateRoomRequest):
+    """✅ FIXED: Create room using room_name as room_id"""
     try:
         room_manager = get_meeting_room_manager()
         await room_manager.start_broadcasting()
+        
+        # ✅ FIX: Use room_name as room_id so users can join by name
+        room_id = request.room_name
+        
         password = request.password
         if password in ("", " ", None, "null", "undefined"):
             password = None
+            
         room = await room_manager.create_room(
             room_id=room_id,
             room_name=request.room_name,
@@ -70,6 +77,7 @@ async def create_meeting_room(room_id: str, request: CreateRoomRequest):
         return {
             "success": True,
             "room": room.to_dict(),
+            "room_id": room_id,
             "websocket_url": f"/meeting/rooms/{room_id}/ws"
         }
 
@@ -77,6 +85,25 @@ async def create_meeting_room(room_id: str, request: CreateRoomRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error creating room: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/rooms/search")
+async def search_room_by_name(room_name: str = Query(...)):
+    """✅ NEW: Search for room by name"""
+    try:
+        room_manager = get_meeting_room_manager()
+        room_info = await room_manager.get_room_info(room_name)
+        
+        if not room_info:
+            raise HTTPException(status_code=404, detail="Room not found")
+        
+        return room_info
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error searching room: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -506,7 +533,7 @@ async def meeting_websocket(
 # Audio processing helper -----------------------------------------------------
 
 async def process_audio(room_id, user_id, username, message, room_manager, websocket):
-    """Process audio chunk using unified Orchestrator pipeline."""
+    """✅ FIXED: Process audio chunk with proper format handling"""
     try:
         # 1️⃣ Extract base64 audio from message
         audio_base64 = message.get("audio_data") or message.get("data", "")
@@ -538,12 +565,13 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
             logger.debug(f"No result from orchestrator for user {username} in {room_id}")
             return
 
-        # If orchestrator returned a multi-speaker chunk, handle each entry
+        # ✅ FIX: Handle both single and multi-speaker responses
+        entries = []
         if result.get("type") == "multi_speaker_chunk":
             entries = result.get("entries", [])
-        else:
-            # single entry expected to have 'text'
-            entries = [result] if result.get("text") else []
+        elif isinstance(result, dict) and result.get("text"):
+            # Single entry
+            entries = [result]
 
         if not entries:
             logger.debug(f"No valid transcription entries for {username} in {room_id}")
@@ -591,7 +619,7 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
                     "scores": entry.get("emotion_scores", {})
                 }
 
-            logger.debug(f"🗣️ [{speaker}] '{text[:60]}' | Emotion={emotion} ({confidence:.2f})")
+            logger.info(f"🗣️ [{speaker}] '{text[:60]}' | Emotion={emotion} ({confidence:.2f})")
 
     except Exception as e:
         logger.error(f"Audio processing error in room {room_id}: {e}", exc_info=True)

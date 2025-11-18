@@ -5,27 +5,16 @@ import { meetingAPI, analyticsAPI } from '../services/api';
 
 const Dashboard = ({ userInfo }) => {
   const navigate = useNavigate();
-
   const [rooms, setRooms] = useState([]);
   const [recentSessions, setRecentSessions] = useState([]);
-
   const [isCreating, setIsCreating] = useState(false);
-  const [isJoining, setIsJoining] = useState(false);
-
   const [newRoomData, setNewRoomData] = useState({
     roomName: '',
     password: '',
     maxParticipants: 50,
   });
-
-  const [joinData, setJoinData] = useState({
-    roomId: '',
-    password: '',
-  });
-
   const [loading, setLoading] = useState(true);
 
-  // Load rooms + analytics ----------------------------------------------------
   useEffect(() => {
     loadDashboardData();
   }, []);
@@ -37,7 +26,6 @@ const Dashboard = ({ userInfo }) => {
         meetingAPI.listRooms(),
         analyticsAPI.listSessions(),
       ]);
-
       setRooms(roomsData.rooms || []);
       setRecentSessions(sessionsData.sessions || []);
     } catch (error) {
@@ -47,25 +35,23 @@ const Dashboard = ({ userInfo }) => {
     }
   };
 
-  // CREATE ROOM ---------------------------------------------------------------
   const handleCreateRoom = async (e) => {
     e.preventDefault();
 
     const roomId = `room_${Date.now()}`;
-    const cleanPassword = newRoomData.password.trim() === "" ? null : newRoomData.password;
 
     try {
       await meetingAPI.createRoom(roomId, {
         room_name: newRoomData.roomName,
         created_by: userInfo.username,
-        password: cleanPassword,
+        password: newRoomData.password.trim() === "" ? null : newRoomData.password,
         max_participants: parseInt(newRoomData.maxParticipants),
       });
 
       setIsCreating(false);
       setNewRoomData({ roomName: '', password: '', maxParticipants: 50 });
+      navigate(`/meeting/rooms/${roomId}?password=${encodeURIComponent(newRoomData.password || "")}`);
 
-      navigate(`/meeting/rooms/${roomId}?password=${encodeURIComponent(cleanPassword || "")}`);
 
     } catch (error) {
       console.error('Error creating room:', error);
@@ -73,12 +59,10 @@ const Dashboard = ({ userInfo }) => {
     }
   };
 
-  // Dashboard "Join" from Active Room list -----------------------------------
   const handleJoinRoom = (roomId, roomPassword) => {
     navigate(`/meeting/rooms/${roomId}?password=${encodeURIComponent(roomPassword || "")}`);
   };
 
-  // LOADING STATE -------------------------------------------------------------
   if (loading) {
     return (
       <div className="dashboard-loading">
@@ -90,53 +74,43 @@ const Dashboard = ({ userInfo }) => {
 
   return (
     <div className="dashboard">
-
-      {/* Header -------------------------------------------------------------- */}
       <div className="dashboard-header">
         <div>
           <h1>Welcome, {userInfo.username}!</h1>
           <p>Start a new meeting or join an existing one</p>
         </div>
-
-        <div className="dashboard-actions">
-          <button className="btn-primary" onClick={() => setIsCreating(true)}>
-            <Plus size={18} /> Create Meeting
-          </button>
-
-          <button className="btn-secondary" onClick={() => setIsJoining(true)}>
-            <Users size={18} /> Join Meeting
-          </button>
-        </div>
+        <button
+          className="btn-primary"
+          onClick={() => setIsCreating(true)}
+        >
+          <Plus size={18} />
+          Create New Meeting
+        </button>
       </div>
 
-      {/* CREATE ROOM MODAL --------------------------------------------------- */}
+      {/* Create Room Modal */}
       {isCreating && (
         <div className="modal-overlay" onClick={() => setIsCreating(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h2>Create New Meeting Room</h2>
-
             <form onSubmit={handleCreateRoom}>
-
               <div className="form-group">
                 <label>Room Name *</label>
                 <input
                   type="text"
                   value={newRoomData.roomName}
-                  onChange={(e) =>
-                    setNewRoomData({ ...newRoomData, roomName: e.target.value })
-                  }
+                  onChange={(e) => setNewRoomData({ ...newRoomData, roomName: e.target.value })}
+                  placeholder="e.g., Team Standup, Client Call"
                   required
                 />
               </div>
 
               <div className="form-group">
-                <label>Password</label>
+                <label>Password </label>
                 <input
                   type="password"
                   value={newRoomData.password}
-                  onChange={(e) =>
-                    setNewRoomData({ ...newRoomData, password: e.target.value })
-                  }
+                  onChange={(e) => setNewRoomData({ ...newRoomData, password: e.target.value })}
                   placeholder="Leave empty for no password"
                 />
               </div>
@@ -145,12 +119,10 @@ const Dashboard = ({ userInfo }) => {
                 <label>Max Participants</label>
                 <input
                   type="number"
+                  value={newRoomData.maxParticipants}
+                  onChange={(e) => setNewRoomData({ ...newRoomData, maxParticipants: e.target.value })}
                   min="2"
                   max="100"
-                  value={newRoomData.maxParticipants}
-                  onChange={(e) =>
-                    setNewRoomData({ ...newRoomData, maxParticipants: e.target.value })
-                  }
                 />
               </div>
 
@@ -162,64 +134,13 @@ const Dashboard = ({ userInfo }) => {
                   Create Room
                 </button>
               </div>
-
             </form>
           </div>
         </div>
       )}
 
-      {/* JOIN ROOM MODAL ----------------------------------------------------- */}
-      {isJoining && (
-        <div className="modal-overlay" onClick={() => setIsJoining(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Join Meeting</h2>
-
-            <div className="form-group">
-              <label>Room ID *</label>
-              <input
-                type="text"
-                value={joinData.roomId}
-                onChange={(e) => setJoinData({ ...joinData, roomId: e.target.value })}
-                placeholder="Enter existing Room ID"
-                required
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Password</label>
-              <input
-                type="password"
-                value={joinData.password}
-                onChange={(e) => setJoinData({ ...joinData, password: e.target.value })}
-                placeholder="Room password"
-              />
-            </div>
-
-            <div className="modal-actions">
-              <button className="btn-secondary" onClick={() => setIsJoining(false)}>
-                Cancel
-              </button>
-
-              <button
-                className="btn-primary"
-                onClick={() => {
-                  navigate(
-                    `/meeting/rooms/${joinData.roomId}?password=${encodeURIComponent(
-                      joinData.password || ""
-                    )}`
-                  );
-                }}
-              >
-                Join
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* STAT CARDS ---------------------------------------------------------- */}
+      {/* Statistics Cards */}
       <div className="stats-grid">
-
         <div className="stat-card">
           <div className="stat-icon" style={{ backgroundColor: '#3b82f6' }}>
             <Video size={24} />
@@ -261,13 +182,11 @@ const Dashboard = ({ userInfo }) => {
             <p>Total Transcripts</p>
           </div>
         </div>
-
       </div>
 
-      {/* ACTIVE ROOMS -------------------------------------------------------- */}
+      {/* Active Rooms */}
       <div className="dashboard-section">
         <h2>Active Meeting Rooms</h2>
-
         {rooms.length === 0 ? (
           <div className="empty-state">
             <Video size={48} />
@@ -280,42 +199,37 @@ const Dashboard = ({ userInfo }) => {
           <div className="rooms-grid">
             {rooms.map((room) => (
               <div key={room.room_id} className="room-card">
-
                 <div className="room-header">
                   <h3>{room.room_name}</h3>
                   <span className={`room-status status-${room.status}`}>
                     {room.status}
                   </span>
                 </div>
-
                 <div className="room-info">
                   <p>
                     <Users size={16} />
-                    {room.participant_count || 0} / {room.max_participants}
+                    {room.participant_count || 0} / {room.max_participants} participants
                   </p>
                   <p>
                     <Clock size={16} />
                     Created {new Date(room.created_at).toLocaleString()}
                   </p>
                 </div>
-
                 <button
                   className="btn-primary btn-block"
                   onClick={() => handleJoinRoom(room.room_id, room.password)}
                 >
                   Join Room
                 </button>
-
               </div>
             ))}
           </div>
         )}
       </div>
 
-      {/* RECENT SESSIONS ----------------------------------------------------- */}
+      {/* Recent Sessions */}
       <div className="dashboard-section">
         <h2>Recent Sessions</h2>
-
         {recentSessions.length === 0 ? (
           <p className="text-muted">No recent sessions</p>
         ) : (
@@ -334,7 +248,6 @@ const Dashboard = ({ userInfo }) => {
             ))}
           </div>
         )}
-
       </div>
     </div>
   );

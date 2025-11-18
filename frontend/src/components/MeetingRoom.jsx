@@ -41,6 +41,7 @@ const MeetingRoom = ({ userInfo }) => {
   // ------------------------------
   const {
     isConnected,
+    isTranscriptConnected,  // ✅ FIX: Added this from useWebSocket return
     transcripts,
     participants,
     activeSpeakerId,
@@ -53,6 +54,7 @@ const MeetingRoom = ({ userInfo }) => {
     sendMessage,
     sendAudioChunk,
   } = useWebSocket(roomId, userInfo.user_id, userInfo.username, roomPassword, userRole);
+  
   // ------------------------------
   // WEBRTC SETUP
   // ------------------------------
@@ -72,19 +74,19 @@ const MeetingRoom = ({ userInfo }) => {
   } = useWebRTC(roomId, userInfo.user_id, sendSignalingMessage);
 
   // ------------------------------
-  // AUDIO RECORDER
+  // AUDIO RECORDER - ✅ FIXED
   // ------------------------------
   const {
     isRecording,
     error: recorderError,
     startRecording,
     stopRecording,
-} = useAudioRecorder((pcmBytes) => {
-    // pcmBytes is Uint8Array from optimized recorder
+  } = useAudioRecorder((pcmBytes) => {
+    // ✅ FIX: Now using isTranscriptConnected from useWebSocket
     if (isTranscriptConnected) {
         sendAudioChunk(pcmBytes);
     }
-});
+  });
 
   // ------------------------------
   // LOAD ROOM INFO → DETERMINE ROLE

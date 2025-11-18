@@ -1,10 +1,9 @@
 # app/services/orchestrator_service.py
 """
-FINAL FIXED VERSION – includes:
-✅ get_session_transcript()
-✅ safe buffering
-✅ prevents Whisper empty reshape crash
-✅ prevents huge buffer accumulation
+FIXED VERSION – Correct response format for meeting router
+✅ Returns multi_speaker_chunk (not "multi")
+✅ Proper speaker identification
+✅ Safe buffering with limits
 """
 
 import asyncio
@@ -75,7 +74,7 @@ class OrchestratorService:
         }
 
     # ==========================================================
-    # PROCESS AUDIO CHUNK
+    # PROCESS AUDIO CHUNK - FIXED
     # ==========================================================
     async def process_audio_chunk(self, audio_bytes: bytes, session_id: str, participant_id=None):
         try:
@@ -96,15 +95,16 @@ class OrchestratorService:
                 pass
 
             # Try soundfile
-            try:
-                io_stream = io.BytesIO(audio_bytes)
-                sf_audio, sf_sr = sf.read(io_stream, dtype="float32", always_2d=False)
-                if sf_audio.ndim > 1:
-                    sf_audio = np.mean(sf_audio, axis=1)
-                audio_array = sf_audio
-                sample_rate = sf_sr
-            except:
-                pass
+            if audio_array is None:
+                try:
+                    io_stream = io.BytesIO(audio_bytes)
+                    sf_audio, sf_sr = sf.read(io_stream, dtype="float32", always_2d=False)
+                    if sf_audio.ndim > 1:
+                        sf_audio = np.mean(sf_audio, axis=1)
+                    audio_array = sf_audio
+                    sample_rate = sf_sr
+                except:
+                    pass
 
             # Fallback decode
             if audio_array is None:
@@ -164,10 +164,13 @@ class OrchestratorService:
                 if not text:
                     continue
 
-                # Speaker ID
-                speaker = participant_id or await self.speaker_service.identify_speaker(
-                    audio_array, session_id, 16000
-                )
+                # ✅ FIX: Use participant_id if provided, otherwise identify speaker
+                if participant_id:
+                    speaker = participant_id
+                else:
+                    speaker = await self.speaker_service.identify_speaker(
+                        audio_array, session_id, 16000
+                    )
 
                 # Emotion (safe)
                 try:
@@ -200,16 +203,20 @@ class OrchestratorService:
 
                 processed.append(entry)
 
+            # ✅ FIX: Return correct format expected by meeting.py
             if len(processed) == 1:
                 return processed[0]
-            return {"type": "multi", "entries": processed}
+            elif len(processed) > 1:
+                return {"type": "multi_speaker_chunk", "entries": processed}
+            else:
+                return None
 
         except Exception as e:
             logger.exception(f"❌ process_audio_chunk failed: {e}")
             return None
 
     # ==========================================================
-    # GET SESSION TRANSCRIPT  (THIS WAS MISSING)
+    # GET SESSION TRANSCRIPT
     # ==========================================================
     async def get_session_transcript(self, session_id: str):
         session = self.active_sessions.get(session_id)
