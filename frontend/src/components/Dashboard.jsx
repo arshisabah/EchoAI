@@ -38,10 +38,9 @@ const Dashboard = ({ userInfo }) => {
   const handleCreateRoom = async (e) => {
     e.preventDefault();
 
-    const roomId = `room_${Date.now()}`;
-
     try {
-      await meetingAPI.createRoom(roomId, {
+      // Use room name directly as room_id
+      await meetingAPI.createRoom(newRoomData.roomName, {
         room_name: newRoomData.roomName,
         created_by: userInfo.username,
         password: newRoomData.password.trim() === "" ? null : newRoomData.password,
@@ -50,8 +49,9 @@ const Dashboard = ({ userInfo }) => {
 
       setIsCreating(false);
       setNewRoomData({ roomName: '', password: '', maxParticipants: 50 });
-      navigate(`/meeting/rooms/${roomId}?password=${encodeURIComponent(newRoomData.password || "")}`);
-
+      
+      // Navigate using room name
+      navigate(`/meeting/rooms/${encodeURIComponent(newRoomData.roomName)}?password=${encodeURIComponent(newRoomData.password || "")}`);
 
     } catch (error) {
       console.error('Error creating room:', error);

@@ -251,9 +251,11 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
     }, []);
 
     const sendAudioChunk = useCallback((audioData, sampleRate = 16000) => {
+        // Convert Uint8Array to base64 for JSON transmission
+        const base64Audio = btoa(String.fromCharCode.apply(null, audioData));
         return sendMessage({
             type: 'audio_chunk',
-            audio_data: audioData,
+            audio_data: base64Audio,
             sample_rate: sampleRate,
         });
     }, [sendMessage]);
@@ -278,6 +280,7 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
 
     return {
         isConnected,
+        isTranscriptConnected: isConnected, // Same connection handles transcription
         transcripts,
         participants,
         activeSpeakerId,

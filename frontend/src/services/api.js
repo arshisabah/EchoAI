@@ -46,7 +46,8 @@ api.interceptors.response.use(
 export const meetingAPI = {
   createRoom: async (roomId, roomData) => {
     try {
-      const response = await api.post(`/meeting/rooms/create?room_id=${roomId}`, roomData);
+      // Room ID is now passed in the body as room_name, not as a query param
+      const response = await api.post(`/meeting/rooms/create`, roomData);
       return response.data;
     } catch (error) {
       throw new Error(`Failed to create room: ${error.message}`);
