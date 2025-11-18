@@ -97,17 +97,24 @@ const Dashboard = ({ userInfo }) => {
           <h1>Welcome, {userInfo.username}!</h1>
           <p>Start a new meeting or join an existing one</p>
         </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
           <button
             className="btn-primary"
-            onClick={() => setIsCreating(true)}
+            onClick={() => {
+              console.log("Creating new room...");
+              setIsCreating(true);
+            }}
           >
             <Plus size={18} />
             Create New Meeting
           </button>
           <button
             className="btn-secondary"
-            onClick={() => setIsJoining(true)}
+            onClick={() => {
+              console.log("Opening join room modal...");
+              setIsJoining(true);
+            }}
+            title="Join an existing room by entering its name"
           >
             <Video size={18} />
             Join Meeting

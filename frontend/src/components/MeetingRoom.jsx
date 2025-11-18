@@ -84,7 +84,10 @@ const MeetingRoom = ({ userInfo }) => {
   } = useAudioRecorder((pcmBytes) => {
     // ✅ FIX: Now using isTranscriptConnected from useWebSocket
     if (isTranscriptConnected) {
+        console.log("🎵 Sending audio chunk:", pcmBytes.length, "bytes");
         sendAudioChunk(pcmBytes);
+    } else {
+        console.warn("⚠️ Audio chunk dropped - WebSocket not connected");
     }
   });
 
@@ -141,8 +144,13 @@ const MeetingRoom = ({ userInfo }) => {
   // Start recording once WebSocket is connected
   useEffect(() => {
     if (isConnected && !isRecording) {
-      console.log("WebSocket connected, starting audio recording...");
+      console.log("✅ WebSocket connected, starting audio recording...");
+      console.log("📊 Connection state - isConnected:", isConnected, "isTranscriptConnected:", isTranscriptConnected);
       startRecording();
+    } else if (!isConnected) {
+      console.log("⏳ Waiting for WebSocket connection...");
+    } else if (isRecording) {
+      console.log("🎤 Recording already in progress");
     }
   }, [isConnected]);
 
