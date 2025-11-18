@@ -118,13 +118,12 @@ const MeetingRoom = ({ userInfo }) => {
   }, [roomId]);
 
   // ------------------------------
-  // START CAMERA/MIC ONLY ONCE
+  // START CAMERA/MIC AFTER WEBSOCKET CONNECTS
   // ------------------------------
   useEffect(() => {
     const initMedia = async () => {
       try {
         await startLocalMedia(false);
-        startRecording();
       } catch (err) {
         console.error("Media init failed:", err);
       }
@@ -138,6 +137,14 @@ const MeetingRoom = ({ userInfo }) => {
       disconnect();
     };
   }, []);
+
+  // Start recording once WebSocket is connected
+  useEffect(() => {
+    if (isConnected && !isRecording) {
+      console.log("WebSocket connected, starting audio recording...");
+      startRecording();
+    }
+  }, [isConnected]);
 
   // ------------------------------
   // UPDATE EMOTION UI

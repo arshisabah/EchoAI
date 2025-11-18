@@ -8,10 +8,15 @@ const Dashboard = ({ userInfo }) => {
   const [rooms, setRooms] = useState([]);
   const [recentSessions, setRecentSessions] = useState([]);
   const [isCreating, setIsCreating] = useState(false);
+  const [isJoining, setIsJoining] = useState(false);
   const [newRoomData, setNewRoomData] = useState({
     roomName: '',
     password: '',
     maxParticipants: 50,
+  });
+  const [joinRoomData, setJoinRoomData] = useState({
+    roomName: '',
+    password: '',
   });
   const [loading, setLoading] = useState(true);
 
@@ -60,7 +65,20 @@ const Dashboard = ({ userInfo }) => {
   };
 
   const handleJoinRoom = (roomId, roomPassword) => {
-    navigate(`/meeting/rooms/${roomId}?password=${encodeURIComponent(roomPassword || "")}`);
+    navigate(`/meeting/rooms/${encodeURIComponent(roomId)}?password=${encodeURIComponent(roomPassword || "")}`);
+  };
+
+  const handleJoinRoomManually = (e) => {
+    e.preventDefault();
+    
+    if (!joinRoomData.roomName.trim()) {
+      alert('Please enter a room name');
+      return;
+    }
+    
+    setIsJoining(false);
+    setJoinRoomData({ roomName: '', password: '' });
+    navigate(`/meeting/rooms/${encodeURIComponent(joinRoomData.roomName)}?password=${encodeURIComponent(joinRoomData.password || "")}`);
   };
 
   if (loading) {
@@ -79,13 +97,22 @@ const Dashboard = ({ userInfo }) => {
           <h1>Welcome, {userInfo.username}!</h1>
           <p>Start a new meeting or join an existing one</p>
         </div>
-        <button
-          className="btn-primary"
-          onClick={() => setIsCreating(true)}
-        >
-          <Plus size={18} />
-          Create New Meeting
-        </button>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button
+            className="btn-primary"
+            onClick={() => setIsCreating(true)}
+          >
+            <Plus size={18} />
+            Create New Meeting
+          </button>
+          <button
+            className="btn-secondary"
+            onClick={() => setIsJoining(true)}
+          >
+            <Video size={18} />
+            Join Meeting
+          </button>
+        </div>
       </div>
 
       {/* Create Room Modal */}
@@ -132,6 +159,46 @@ const Dashboard = ({ userInfo }) => {
                 </button>
                 <button type="submit" className="btn-primary">
                   Create Room
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Join Room Modal */}
+      {isJoining && (
+        <div className="modal-overlay" onClick={() => setIsJoining(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Join Meeting Room</h2>
+            <form onSubmit={handleJoinRoomManually}>
+              <div className="form-group">
+                <label>Room Name *</label>
+                <input
+                  type="text"
+                  value={joinRoomData.roomName}
+                  onChange={(e) => setJoinRoomData({ ...joinRoomData, roomName: e.target.value })}
+                  placeholder="Enter room name"
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Password (if required)</label>
+                <input
+                  type="password"
+                  value={joinRoomData.password}
+                  onChange={(e) => setJoinRoomData({ ...joinRoomData, password: e.target.value })}
+                  placeholder="Leave empty if no password"
+                />
+              </div>
+
+              <div className="modal-actions">
+                <button type="button" className="btn-secondary" onClick={() => setIsJoining(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary">
+                  Join Room
                 </button>
               </div>
             </form>
