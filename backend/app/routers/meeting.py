@@ -741,7 +741,7 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
     """✅ FIXED: Process audio chunk with proper format handling"""
     try:
         # 1️⃣ Extract base64 audio from message
-        audio_base64 = message.get("audio_data") or message.get("data", "")
+        audio_base64 = message.get("audio") or message.get("audio_data") or message.get("data", "")
         if not audio_base64:
             logger.warning(f"No audio data found for user {username} in room {room_id}")
             return
