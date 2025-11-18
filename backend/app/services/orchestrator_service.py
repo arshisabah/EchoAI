@@ -141,8 +141,21 @@ class OrchestratorService:
 
             duration_sec = len(combined) / 16000
 
+            # Wait for at least 4 seconds OR detect silence boundary (1.5s silence at end)
+            # This ensures we process after speaker finishes talking
             if duration_sec < 4.0:
                 return {"type": "listening", "buffered_duration": duration_sec}
+            
+            # Check for silence boundary - wait for speaker to finish
+            # If no silence detected yet and duration < 8s, keep buffering
+            if duration_sec < 8.0:
+                # Check if there's a 1.5s silence at the end
+                tail_samples = min(int(16000 * 1.5), len(combined))
+                tail = combined[-tail_samples:]
+                tail_energy = np.sqrt(np.mean(tail ** 2))
+                
+                if tail_energy >= 0.005:  # Still speaking
+                    return {"type": "listening", "buffered_duration": duration_sec}
 
             # Clear buffer after processing
             self.audio_buffers[session_id] = []
@@ -232,6 +245,59 @@ class OrchestratorService:
             "created_at": session.created_at.isoformat(),
             "last_activity": session.last_activity.isoformat(),
         }
+
+    # ==========================================================
+    # SESSION MANAGEMENT METHODS
+    # ==========================================================
+    def get_session_list(self) -> List[Dict[str, Any]]:
+        """Get list of all active sessions."""
+        sessions = []
+        for session_id, session in self.active_sessions.items():
+            sessions.append({
+                "session_id": session_id,
+                "created_at": session.created_at.isoformat(),
+                "last_activity": session.last_activity.isoformat(),
+                "is_active": session.is_active,
+                "speaker_count": len(session.speakers),
+                "entry_count": len(session.transcript_entries)
+            })
+        return sessions
+
+    def get_session_details(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get detailed information about a session."""
+        session = self.active_sessions.get(session_id)
+        if not session:
+            return None
+        
+        return {
+            "session_id": session_id,
+            "created_at": session.created_at.isoformat(),
+            "last_activity": session.last_activity.isoformat(),
+            "is_active": session.is_active,
+            "speakers": session.speakers,
+            "speaker_count": len(session.speakers),
+            "transcript_entries": session.transcript_entries,
+            "total_entries": len(session.transcript_entries)
+        }
+
+    def get_emotion_timeline(self, session_id: str) -> List[Dict[str, Any]]:
+        """Get emotion timeline for a session."""
+        session = self.active_sessions.get(session_id)
+        if not session:
+            return []
+        
+        timeline = []
+        for entry in session.transcript_entries:
+            if entry.get("emotion"):
+                timeline.append({
+                    "timestamp": entry.get("timestamp"),
+                    "emotion": entry.get("emotion"),
+                    "confidence": entry.get("emotion_confidence", 0),
+                    "speaker": entry.get("speaker"),
+                    "text_preview": entry.get("text", "")[:50]
+                })
+        
+        return timeline
 
     # ==========================================================
     # CLEAN INACTIVE SESSIONS

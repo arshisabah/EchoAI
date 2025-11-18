@@ -305,6 +305,12 @@ async def list_all_sessions():
         logger.error(f"List sessions error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+
+@router.get("/sessions/list")
+async def list_sessions_alias():
+    """Alias for /sessions endpoint to support legacy API calls."""
+    return await list_all_sessions()
+
 @router.get("/{session_id}")
 async def get_basic_or_detailed_analytics(session_id: str):
     """Alias route for frontend analytics dashboard"""
