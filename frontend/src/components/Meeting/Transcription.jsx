@@ -5,12 +5,30 @@ import { meetingAPI } from '../../services/api';
 
 const TranscriptPanel = ({ transcripts, onExport, roomId }) => {
   const transcriptEndRef = useRef(null);
+  const dropdownRef = useRef(null);
   const [showFormatMenu, setShowFormatMenu] = useState(false);
   const [downloading, setDownloading] = useState(null);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transcripts]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setShowFormatMenu(false);
+      }
+    };
+
+    if (showFormatMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showFormatMenu]);
 
   const handleDownloadTranscript = async (format) => {
     if (!roomId) {
@@ -63,7 +81,7 @@ const TranscriptPanel = ({ transcripts, onExport, roomId }) => {
           <span className="badge">{transcripts.length}</span>
         </div>
         {transcripts.length > 0 && roomId && (
-          <div className="export-dropdown">
+          <div className="export-dropdown" ref={dropdownRef}>
             <button 
               className="btn-secondary btn-sm" 
               onClick={() => setShowFormatMenu(!showFormatMenu)}
