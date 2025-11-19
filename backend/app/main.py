@@ -22,7 +22,10 @@ setup_logging(log_level=settings.LOG_LEVEL)
 logger = logging.getLogger(__name__)
 
 # Initialize database
-init_db()
+try:
+    init_db()
+except Exception as e:
+    logger.warning(f"Database initialization failed: {e}. App will continue without database.")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

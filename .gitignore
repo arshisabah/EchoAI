@@ -128,4 +128,4 @@ lerna-debug.log*
 *.ntvs*
 *.njsproj
 *.sln
-*.sw?
+*.sw?*.db
