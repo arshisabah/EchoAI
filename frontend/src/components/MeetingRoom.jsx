@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff, MessageSquare,
-  FileText, Users, Heart, CheckSquare, FileText as Summary, Monitor, MonitorOff
+  FileText, Users, Heart, CheckSquare, FileText as Summary, Monitor, MonitorOff,
+  PanelRightOpen, PanelRightClose
 } from 'lucide-react';
 
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -35,6 +36,7 @@ const MeetingRoom = ({ userInfo }) => {
   const [emotionHistory, setEmotionHistory] = useState([]);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [showPostMeetingModal, setShowPostMeetingModal] = useState(false);
+  const [isSidePanelOpen, setIsSidePanelOpen] = useState(true);
 
   // ✅ FIX: Use ref to always have latest connection state
   const isTranscriptConnectedRef = useRef(false);
@@ -307,9 +309,18 @@ const MeetingRoom = ({ userInfo }) => {
             isLocalAudioEnabled={isAudioEnabled}
             activeSpeakerId={activeSpeakerId}
           />
+          
+          {/* Panel Toggle Button (floating) */}
+          <button 
+            className="panel-toggle-btn"
+            onClick={() => setIsSidePanelOpen(!isSidePanelOpen)}
+            title={isSidePanelOpen ? "Hide side panel" : "Show side panel"}
+          >
+            {isSidePanelOpen ? <PanelRightClose size={20} /> : <PanelRightOpen size={20} />}
+          </button>
         </div>
 
-        <div className="meeting-side-panel">
+        <div className={`meeting-side-panel ${isSidePanelOpen ? 'open' : 'closed'}`}>
           <div className="panel-tabs">
             <button className={`panel-tab ${activeTab === "transcript" ? "active" : ""}`} onClick={() => setActiveTab("transcript")}>
               <FileText size={18} /> Transcript <span className="tab-badge">{transcripts.length}</span>
