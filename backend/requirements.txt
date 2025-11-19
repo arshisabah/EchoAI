@@ -1,31 +1,3 @@
-# 
-# 
-fastapi 
-uvicorn[standard]
-pydantic
-pydantic-settings
-python-multipart
-websockets
-# 
-openai
-anthropic
-httpx
-aiohttp
-# 
-torch
-torchaudio
-transformers
-# 
-openai-whisper
-# 
-# 
-librosa
-soundfile
-pydub
-numpy
-# 
-asyncpg # requirements.txt - EchoAI Backend Dependencies
-
 # Core Framework
 fastapi
 uvicorn[standard]
@@ -45,9 +17,8 @@ torch
 torchaudio
 transformers
 
-# Transcription (choose one or all)
-openai-whisper  # Local Whisper (fallback)
-# git+https://github.com/m-bain/whisperX.git  # WhisperX (optional, best quality)
+# Transcription
+openai-whisper
 
 # Audio Processing (REQUIRED)
 librosa
@@ -56,8 +27,8 @@ pydub
 numpy
 
 # Database
-asyncpg  # PostgreSQL
-motor  # MongoDB
+asyncpg
+motor
 sqlalchemy
 psycopg2-binary
 
@@ -70,58 +41,6 @@ python-jose[cryptography]
 psutil
 
 # Development & Testing
-pytest
-pytest-asyncio
-black
-motor
-sqlalchemy
-psycopg2-binary
-# 
-python-dotenv
-aiofiles
-python-jose[cryptography]
-# 
-psutil
-# 
-pytest
-pytest-asyncio
-black
-# 
-fastapi
-uvicorn[standard]
-pydantic
-pydantic-settings
-python-multipart
-websockets
-# 
-openai
-anthropic
-httpx
-aiohttp
-# 
-torch
-torchaudio
-transformers
-# 
-openai-whisper
-# 
-# 
-librosa
-soundfile
-pydub
-numpy
-# 
-asyncpg
-motor
-sqlalchemy
-psycopg2-binary
-# 
-python-dotenv
-aiofiles
-python-jose[cryptography]
-# 
-psutil
-# 
 pytest
 pytest-asyncio
 black
