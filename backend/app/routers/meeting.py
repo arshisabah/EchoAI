@@ -795,6 +795,7 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
 
         # 2️⃣ Decode base64 → bytes
         audio_bytes = base64.b64decode(audio_base64)
+        logger.debug(f"🎵 Processing audio chunk from {username}: {len(audio_bytes)} bytes")
 
         # 2.5️⃣ Add audio to recorder for meeting recording
         try:
@@ -855,6 +856,7 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
                                                    context={"username": username, "room_id": room_id, "speaker": speaker})
 
             # Broadcast transcript + emotion -> uses manager's broadcast_transcript
+            logger.info(f"📢 Broadcasting transcript from {username} in {room_id}: '{text[:50]}...'")
             await room_manager.broadcast_transcript(
                 room_id=room_id,
                 user_id=user_id,
