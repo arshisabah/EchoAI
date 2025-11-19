@@ -135,8 +135,10 @@ class OrchestratorService:
             # HARD LIMIT: max 3s buffer (reduced from 5s for lower latency)
             MAX_SAMPLES = 16000 * 3
             total_len = sum(len(x) for x in buf)
-            if total_len > MAX_SAMPLES:
-                self.audio_buffers[session_id] = buf[-3:]
+            # Trim buffer by sample count (FIFO - remove oldest chunks)
+            while total_len > MAX_SAMPLES and len(buf) > 1:
+                buf.pop(0)  # Remove oldest chunk
+                total_len = sum(len(x) for x in buf)
 
             # Combine chunks
             try:
