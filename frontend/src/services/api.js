@@ -1,20 +1,21 @@
 import axios from 'axios';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import config from '../config';
 
 const api = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: config.BACKEND_URL,
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// Request interceptor with error handling
+// Request interceptor
 api.interceptors.request.use(
-  (config) => {
-    console.log(`[API] ${config.method?.toUpperCase()} ${config.url}`);
-    return config;
+  (reqConfig) => {
+    if (config.DEBUG) {
+      console.log(`[API] ${reqConfig.method?.toUpperCase()} ${reqConfig.url}`, reqConfig.data);
+    }
+    return reqConfig;
   },
   (error) => {
     console.error('[API] Request Error:', error);
@@ -22,20 +23,20 @@ api.interceptors.request.use(
   }
 );
 
-// Response interceptor with better error handling
+// Response interceptor
 api.interceptors.response.use(
   (response) => {
-    console.log(`[API] ${response.status} ${response.config.url}`);
+    if (config.DEBUG) {
+      console.log(`[API] ${response.status} ${response.config.url}`, response.data);
+    }
     return response;
   },
   (error) => {
     const message = error.response?.data?.detail || error.message || 'Unknown error';
-    console.error('[API] Response Error:', message);
+    console.error('[API] Response Error:', message, error.response?.data);
     
-    // Handle specific error codes
     if (error.response?.status === 401) {
-      // Redirect to login if unauthorized
-      window.location.href = '/login';
+      console.warn('Unauthorized access');
     }
     
     return Promise.reject(new Error(message));
@@ -44,9 +45,8 @@ api.interceptors.response.use(
 
 // Meeting Room API
 export const meetingAPI = {
-  createRoom: async (roomId, roomData) => {
+  createRoom: async (roomData) => {  // ✅ Removed unused roomId parameter
     try {
-      // Room ID is now passed in the body as room_name, not as a query param
       const response = await api.post(`/meeting/rooms/create`, roomData);
       return response.data;
     } catch (error) {

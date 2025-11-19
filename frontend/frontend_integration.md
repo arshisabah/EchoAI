@@ -534,3 +534,14 @@ Your backend is **PRODUCTION READY** for multi-user meetings with:
 5. Meeting analytics
 
 **All files work together seamlessly!** 🎉
+
+# Terminal 1: Start Backend
+cd backend
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# Terminal 2: Update IP in .env, then start Frontend
+cd frontend
+# Edit .env: VITE_BACKEND_URL=http://192.168.0.106:8000
+npm run dev:network
+
+# Access from any device: http://192.168.0.106:5173

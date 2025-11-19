@@ -41,29 +41,62 @@ const Dashboard = ({ userInfo }) => {
     }
   };
 
-  const handleCreateRoom = async (e) => {
-    e.preventDefault();
+const handleCreateRoom = async (e) => {
+  e.preventDefault();
 
-    try {
-      // Use room name directly as room_id
-      await meetingAPI.createRoom(newRoomData.roomName, {
-        room_name: newRoomData.roomName,
-        created_by: userInfo.username,
-        password: newRoomData.password.trim() === "" ? null : newRoomData.password,
-        max_participants: parseInt(newRoomData.maxParticipants),
-      });
-
-      setIsCreating(false);
-      setNewRoomData({ roomName: '', password: '', maxParticipants: 50 });
-      
-      // Navigate using room name
-      navigate(`/meeting/rooms/${encodeURIComponent(newRoomData.roomName)}?password=${encodeURIComponent(newRoomData.password || "")}`);
-
-    } catch (error) {
-      console.error('Error creating room:', error);
-      alert('Failed to create room: ' + error.message);
+  try {
+    // Validate room name
+    const roomName = newRoomData.roomName?.trim();
+    if (!roomName) {
+      alert('Please enter a room name');
+      return;
     }
-  };
+
+    // Normalize and validate max participants
+    const maxParticipants = (() => {
+      const n = parseInt(newRoomData.maxParticipants, 10);
+      return Number.isFinite(n) && n >= 2 && n <= 100 ? n : 50;
+    })();
+
+    // Normalize password
+    const passwordForApi = newRoomData.password?.trim() || null;
+
+    // Call API with validated payload
+    const result = await meetingAPI.createRoom({
+      room_name: roomName,
+      created_by: userInfo?.username || 'Guest',
+      password: passwordForApi,
+      max_participants: maxParticipants,
+    });
+
+    console.log('✅ Room created:', result);
+
+    // Capture password for navigation before clearing state
+    const passwordForNav = passwordForApi || '';
+
+    // Reset modal state
+    setIsCreating(false);
+    setNewRoomData({ roomName: '', password: '', maxParticipants: 50 });
+    
+    // Reload dashboard to show new room
+    await loadDashboardData();
+    
+    // Navigate to the created room
+    navigate(
+      `/meeting/rooms/${encodeURIComponent(result.room_id)}?password=${encodeURIComponent(passwordForNav)}`
+    );
+
+  } catch (error) {
+    console.error('❌ Error creating room:', error);
+    
+    // More user-friendly error messages
+    const errorMessage = error.response?.data?.detail 
+      || error.message 
+      || 'Unknown error occurred';
+    
+    alert(`Failed to create room: ${errorMessage}`);
+  }
+};
 
   const handleJoinRoom = (roomId, hasPassword) => {
     if (hasPassword) {

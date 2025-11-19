@@ -4,21 +4,9 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
-    host: true,
+    host: true, // Expose to network (0.0.0.0)
     port: 5173,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:8000', // ✅ Use your backend IP, not localhost
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
-      },
-      '/meeting': {
-        target: 'http://localhost:8000', // ✅ Use ws:// + your LAN IP
-        changeOrigin: true,
-        ws: true,
-        secure: false,
-      },
-    },
+    strictPort: false,
   },
   build: {
     outDir: 'dist',
