@@ -22,6 +22,7 @@ from app.services.emotion_analysis import analyze_text_and_audio_combined
 from app.services.summary_service import get_summary_service
 from app.services.speaker_identification_service import get_speaker_service
 from app.services.audio_utils import bytes_to_numpy
+from app.modules.realtime_store import get_transcript_store
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ class OrchestratorService:
         self.transcription_service = get_transcription_service()
         self.summary_service = get_summary_service()
         self.speaker_service = get_speaker_service()
+        self.transcript_store = get_transcript_store()
 
         self.active_sessions: Dict[str, SessionData] = {}
         self.audio_buffers: Dict[str, List[np.ndarray]] = {}
@@ -126,8 +128,8 @@ class OrchestratorService:
             buf = self.audio_buffers.setdefault(session_id, [])
             buf.append(audio_array)
 
-            # HARD LIMIT: max 5s buffer
-            MAX_SAMPLES = 16000 * 5
+            # HARD LIMIT: max 3s buffer (reduced from 5s for lower latency)
+            MAX_SAMPLES = 16000 * 3
             total_len = sum(len(x) for x in buf)
             if total_len > MAX_SAMPLES:
                 self.audio_buffers[session_id] = buf[-3:]
@@ -141,20 +143,20 @@ class OrchestratorService:
 
             duration_sec = len(combined) / 16000
 
-            # Wait for at least 4 seconds OR detect silence boundary (1.5s silence at end)
-            # This ensures we process after speaker finishes talking
-            if duration_sec < 4.0:
+            # Wait for at least 1.5 seconds OR detect silence boundary (0.8s silence at end)
+            # Reduced from 4.0s to 1.5s for better real-time responsiveness
+            if duration_sec < 1.5:
                 return {"type": "listening", "buffered_duration": duration_sec}
             
             # Check for silence boundary - wait for speaker to finish
-            # If no silence detected yet and duration < 8s, keep buffering
-            if duration_sec < 8.0:
-                # Check if there's a 1.5s silence at the end
-                tail_samples = min(int(16000 * 1.5), len(combined))
+            # If no silence detected yet and duration < 3s, keep buffering
+            if duration_sec < 3.0:
+                # Check if there's a 0.8s silence at the end (reduced from 1.5s)
+                tail_samples = min(int(16000 * 0.8), len(combined))
                 tail = combined[-tail_samples:]
                 tail_energy = np.sqrt(np.mean(tail ** 2))
                 
-                if tail_energy >= 0.005:  # Still speaking
+                if tail_energy >= 0.008:  # Still speaking (increased from 0.005 to be more permissive)
                     return {"type": "listening", "buffered_duration": duration_sec}
 
             # Clear buffer after processing
@@ -213,6 +215,24 @@ class OrchestratorService:
                 session.transcript_entries.append(entry)
                 if speaker not in session.speakers:
                     session.speakers.append(speaker)
+
+                # ✅ FIX: Sync to transcript store for downloads
+                try:
+                    store_entry = await self.transcript_store.add_transcript_entry(
+                        meeting_id=session_id,
+                        speaker=speaker,
+                        text=text,
+                        confidence=r.confidence
+                    )
+                    # Add emotion data to store entry
+                    if store_entry:
+                        store_entry.emotions = {
+                            "emotion": emotion["emotion"],
+                            "confidence": emotion.get("confidence", 0),
+                            "scores": emotion.get("scores", {})
+                        }
+                except Exception as store_err:
+                    logger.warning(f"Failed to sync to transcript store: {store_err}")
 
                 processed.append(entry)
 
@@ -298,6 +318,66 @@ class OrchestratorService:
                 })
         
         return timeline
+
+    # ==========================================================
+    # CLOSE SESSION
+    # ==========================================================
+    async def close_session(self, session_id: str):
+        """Close a session and cleanup resources."""
+        try:
+            if session_id in self.active_sessions:
+                session = self.active_sessions[session_id]
+                session.is_active = False
+                session.last_activity = datetime.utcnow()
+                logger.info(f"🔒 Closed session: {session_id}")
+            
+            # Clear audio buffer
+            if session_id in self.audio_buffers:
+                del self.audio_buffers[session_id]
+        except Exception as e:
+            logger.error(f"Error closing session {session_id}: {e}")
+
+    # ==========================================================
+    # GENERATE REALTIME SUMMARY
+    # ==========================================================
+    async def generate_realtime_summary(self, session_id: str) -> Dict[str, Any]:
+        """Generate a real-time summary for a session."""
+        try:
+            session = self.active_sessions.get(session_id)
+            if not session:
+                return {"error": "Session not found"}
+            
+            # Get transcript texts
+            transcript_texts = [entry.get("text", "") for entry in session.transcript_entries]
+            
+            if not transcript_texts:
+                return {
+                    "session_id": session_id,
+                    "summary": "No transcript available yet",
+                    "entry_count": 0
+                }
+            
+            # Generate summary using summary service
+            summary_result = await self.summary_service.generate_structured_summary(
+                transcript_texts,
+                session_id,
+                mode="realtime"
+            )
+            
+            return {
+                "session_id": session_id,
+                "summary": summary_result,
+                "entry_count": len(session.transcript_entries),
+                "speaker_count": len(session.speakers),
+                "generated_at": datetime.utcnow().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"Error generating realtime summary for {session_id}: {e}")
+            return {
+                "session_id": session_id,
+                "error": str(e),
+                "summary": "Error generating summary"
+            }
 
     # ==========================================================
     # CLEAN INACTIVE SESSIONS
