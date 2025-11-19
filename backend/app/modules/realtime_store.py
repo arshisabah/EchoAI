@@ -63,12 +63,32 @@ class RealtimeStore:
         self._transcripts: Dict[str, List[TranscriptEntry]] = {}
         self._sessions: Dict[str, SessionInfo] = {}
         self._connections: Dict[str, Set[asyncio.Queue]] = {}
-        self._lock = asyncio.Lock()
+        self._lock = None  # Lazy-initialized per event loop
+        self._lock_loop_id = None  # Track which event loop owns the lock
         self._metadata: Dict[str, Dict] = {}
+    
+    def _get_lock(self):
+        """Get or create lock for current event loop."""
+        try:
+            loop = asyncio.get_running_loop()
+            loop_id = id(loop)
+            
+            # Create new lock if we don't have one or if we're in a different event loop
+            if self._lock is None or self._lock_loop_id != loop_id:
+                self._lock = asyncio.Lock()
+                self._lock_loop_id = loop_id
+            
+            return self._lock
+        except RuntimeError:
+            # No event loop running - shouldn't happen in async context
+            # but return a new lock as fallback
+            if self._lock is None:
+                self._lock = asyncio.Lock()
+            return self._lock
         
     async def create_session(self, meeting_id: str, metadata: Optional[Dict] = None) -> SessionInfo:
         """Create a new session."""
-        async with self._lock:
+        async with self._get_lock():
             if meeting_id in self._sessions:
                 logger.warning(f"Session {meeting_id} already exists")
                 return self._sessions[meeting_id]
@@ -100,7 +120,7 @@ class RealtimeStore:
         confidence: float = 1.0
     ) -> TranscriptEntry:
         """Add a transcript entry."""
-        async with self._lock:
+        async with self._get_lock():
             if meeting_id not in self._sessions:
                 await self.create_session(meeting_id)
             

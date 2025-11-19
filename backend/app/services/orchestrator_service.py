@@ -28,6 +28,34 @@ logger = logging.getLogger(__name__)
 
 
 # ==========================================================
+# AUTO-TRIMMING AUDIO BUFFER
+# ==========================================================
+class AutoTrimmingAudioList(list):
+    """List that automatically trims to max samples when modified."""
+    MAX_SAMPLES = 16000 * 3  # 3 seconds at 16kHz
+    
+    def append(self, item):
+        super().append(item)
+        self._trim()
+    
+    def _trim(self):
+        """Trim buffer by sample count (FIFO - remove oldest chunks)."""
+        total_len = sum(len(x) for x in self)
+        while total_len > self.MAX_SAMPLES and len(self) > 1:
+            self.pop(0)  # Remove oldest chunk
+            total_len = sum(len(x) for x in self)
+
+
+class AudioBufferDict(dict):
+    """Dict that returns AutoTrimmingAudioList for audio buffers."""
+    
+    def setdefault(self, key, default=None):
+        if key not in self:
+            self[key] = AutoTrimmingAudioList()
+        return self[key]
+
+
+# ==========================================================
 # SESSION DATA CLASS
 # ==========================================================
 class SessionData:
@@ -52,7 +80,7 @@ class OrchestratorService:
         self.transcript_store = get_transcript_store()
 
         self.active_sessions: Dict[str, SessionData] = {}
-        self.audio_buffers: Dict[str, List[np.ndarray]] = {}
+        self.audio_buffers: AudioBufferDict = AudioBufferDict()
 
         logger.info("✅ OrchestratorService initialized")
 
@@ -129,14 +157,9 @@ class OrchestratorService:
             audio_array = audio_array / (np.max(np.abs(audio_array)) + 1e-6)
 
             # ---------- STEP 2: BUFFER ----------
+            # Buffer automatically trims to 3 seconds via AutoTrimmingAudioList
             buf = self.audio_buffers.setdefault(session_id, [])
-            buf.append(audio_array)
-
-            # HARD LIMIT: max 3s buffer (reduced from 5s for lower latency)
-            MAX_SAMPLES = 16000 * 3
-            total_len = sum(len(x) for x in buf)
-            if total_len > MAX_SAMPLES:
-                self.audio_buffers[session_id] = buf[-3:]
+            buf.append(audio_array)  # Auto-trims if needed
 
             # Combine chunks
             try:
