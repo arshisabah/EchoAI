@@ -413,14 +413,6 @@ body {
   transform: scale(1.05);
 }
 
-/* ===== Layout ===== */
-.meeting-content {
-  display: grid;
-  grid-template-columns: 1fr 400px;
-  height: calc(100vh - 80px);  /* ensures full height under top bar */
-  min-height: 0;               /* CRITICAL: allows children to shrink inside */
-  overflow: hidden;
-}
 /* ============================================
    VIDEO GRID
    ============================================ */
@@ -429,6 +421,37 @@ body {
   padding: 1rem;
   height: 100%;
   overflow-y: auto;
+  position: relative;
+}
+
+/* Panel Toggle Button */
+.panel-toggle-btn {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 10;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(59, 130, 246, 0.9);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.panel-toggle-btn:hover {
+  background: rgba(37, 99, 235, 1);
+  transform: scale(1.05);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.panel-toggle-btn:active {
+  transform: scale(0.95);
 }
 
 /* Speaker highlight */
@@ -615,8 +638,13 @@ body {
 
 /* ===== Responsive ===== */
 @media (max-width: 1024px) {
-  .meeting-content {
-    grid-template-columns: 1fr;
+  .meeting-side-panel {
+    width: 350px;
+  }
+  
+  .panel-toggle-btn {
+    width: 44px;
+    height: 44px;
   }
 }
 
@@ -627,17 +655,64 @@ body {
   .video-tile {
     aspect-ratio: 4 / 3;
   }
+  
+  .meeting-side-panel {
+    width: 300px;
+  }
+  
+  .panel-toggle-btn {
+    width: 40px;
+    height: 40px;
+    top: 0.5rem;
+    right: 0.5rem;
+  }
 }
 
 /* ============================================
    SIDE PANEL
    ============================================ */
+.meeting-content {
+  display: flex;
+  height: calc(100vh - 80px);
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.meeting-video-section {
+  flex: 1;
+  background: #0f172a;
+  padding: 1rem;
+  height: 100%;
+  overflow-y: auto;
+  position: relative;
+}
+
 .meeting-side-panel {
   background: white;
   border-left: 1px solid #e2e8f0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: transform 0.3s ease, opacity 0.3s ease;
+  width: 400px;
+  flex-shrink: 0;
+}
+
+.meeting-side-panel.closed {
+  transform: translateX(100%);
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: 0;
+  height: 100%;
+}
+
+.meeting-side-panel.open {
+  transform: translateX(0);
+  opacity: 1;
+  position: relative;
 }
 
 .panel-tabs {
