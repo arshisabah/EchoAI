@@ -8,7 +8,7 @@
    - Successfully starts on port 8000
    - All API endpoints are functional
    - WebSocket connections are ready
-   - Database (SQLite) is initialized
+   - Database (PostgreSQL) is configured
    - Error handling and logging is in place
 
 2. **Core Features Ready**
@@ -117,7 +117,7 @@
 | Emotion Guidance | ✅ | ❓ | Ready | Rule-based guidance |
 | Analytics | ✅ | ❓ | Ready | Endpoint ready |
 | Summary | ✅ | ❓ | Ready | Endpoint ready |
-| Data Persistence | ✅ | ❓ | Ready | SQLite database |
+| Data Persistence | ✅ | ❓ | Ready | PostgreSQL database |
 | Recording Download | ✅ | ❓ | Ready | WAV export |
 | Transcript Download | ✅ | ❓ | Ready | TXT/JSON/SRT |
 | Diarization | ⚠️ | ❓ | Needs Models | Optional feature |
@@ -215,7 +215,7 @@ curl http://localhost:8000/meeting/rooms/my-test-room
 └─────────────┘                                 └─────────────┘
                                                        │
                                                        ├── OpenAI API (Transcription)
-                                                       ├── SQLite DB (Data)
+                                                       ├── PostgreSQL DB (Data)
                                                        ├── Audio Recorder
                                                        └── AI Services
 ```
