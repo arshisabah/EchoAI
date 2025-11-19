@@ -24,7 +24,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"✅ Using device: {DEVICE}")
 
 # Load Whisper
-whisper_model = whisper.load_model("small", device=DEVICE)
+whisper_model = whisper.load_model("base", device=DEVICE)
 
 # Load HuggingFace Emotion Classifier
 sentiment_analyzer = hf_pipeline(
