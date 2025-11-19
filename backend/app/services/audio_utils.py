@@ -15,10 +15,13 @@ import soundfile as sf
 logger = logging.getLogger(__name__)
 
 
-def bytes_to_numpy(audio_bytes: bytes, sample_rate: int = 16000) -> np.ndarray:
+def bytes_to_numpy(audio_bytes: bytes, sample_rate: int = 16000) -> Tuple[np.ndarray, int]:
     """
     Convert raw PCM16 bytes → numpy float32.
     Fallback to SoundFile ONLY if PCM decoding is not valid.
+    
+    Returns:
+        Tuple[np.ndarray, int]: (audio_array, sample_rate)
     """
 
     try:
@@ -27,7 +30,7 @@ def bytes_to_numpy(audio_bytes: bytes, sample_rate: int = 16000) -> np.ndarray:
         # -----------------------------------------
         if not audio_bytes or len(audio_bytes) == 0:
             logger.warning("Empty audio buffer")
-            return np.array([], dtype=np.float32)
+            return np.array([], dtype=np.float32), sample_rate
 
         # PCM MUST be even-length for int16
         if len(audio_bytes) % 2 == 1:
@@ -42,7 +45,7 @@ def bytes_to_numpy(audio_bytes: bytes, sample_rate: int = 16000) -> np.ndarray:
 
             if pcm.size > 0:
                 logger.debug(f"Decoded raw PCM16: {pcm.size} samples @ {sample_rate}Hz")
-                return pcm
+                return pcm, sample_rate
         except Exception as e_pcm:
             logger.debug(f"PCM decode failed: {e_pcm}")
 
@@ -63,18 +66,18 @@ def bytes_to_numpy(audio_bytes: bytes, sample_rate: int = 16000) -> np.ndarray:
                 audio_array = librosa.resample(audio_array, orig_sr=actual_sr, target_sr=sample_rate)
 
             logger.debug(f"Decoded using SoundFile: {len(audio_array)} samples @ {sample_rate}Hz")
-            return audio_array
+            return audio_array, sample_rate
 
         except Exception as e_sf:
             logger.error(f"SoundFile fallback decode failed: {e_sf}")
 
         # If all fail
         logger.error("Audio decode failed (PCM + SoundFile). Returning empty.")
-        return np.array([], dtype=np.float32)
+        return np.array([], dtype=np.float32), sample_rate
 
     except Exception as e:
         logger.error(f"Unexpected audio conversion error: {e}")
-        return np.array([], dtype=np.float32)
+        return np.array([], dtype=np.float32), sample_rate
 
 
 def _bytes_to_numpy_wav(audio_bytes: bytes, target_sr: int) -> Tuple[np.ndarray, int]:

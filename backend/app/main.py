@@ -127,6 +127,7 @@ logger.info("✅ All API routers loaded")
 async def read_root():
     """Root endpoint with API information."""
     return {
+        "message": "Welcome to EchoAI Backend API",
         "name": "EchoAI Backend",
         "version": "3.0.0",
         "status": "running",

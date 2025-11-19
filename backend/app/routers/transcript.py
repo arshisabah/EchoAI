@@ -242,10 +242,69 @@ async def process_transcription(file: UploadFile = File(...), session_id: str = 
         raise HTTPException(500, str(e))
 
 
+@router.post("/session/{session_id}/create")
+async def create_session(session_id: str):
+    """Create a new session."""
+    store = get_transcript_store()
+    try:
+        session = await store.create_session(session_id)
+        return {"session_id": session_id, "status": "created"}
+    except Exception as e:
+        logger.error(f"Failed to create session: {e}")
+        raise HTTPException(500, f"Failed to create session: {str(e)}")
+
+
 @router.get("/session/{session_id}")
 async def get_transcript(session_id: str):
+    """Get transcript for a session."""
+    store = get_transcript_store()
+    try:
+        # Try to get transcripts from store
+        transcripts = await store.get_transcripts(session_id)
+        return {
+            "session_id": session_id,
+            "transcript": transcripts
+        }
+    except Exception as e:
+        logger.warning(f"Session {session_id} not found or error: {e}")
+        # Return empty transcript if session doesn't exist
+        return {
+            "session_id": session_id,
+            "transcript": []
+        }
+
+
+@router.get("/sessions")
+async def list_sessions():
+    """List all sessions."""
+    store = get_transcript_store()
+    try:
+        sessions = store.list_sessions()
+        return {
+            "sessions": sessions,
+            "total_sessions": len(sessions)
+        }
+    except Exception as e:
+        logger.error(f"Failed to list sessions: {e}")
+        return {
+            "sessions": [],
+            "total_sessions": 0
+        }
+
+
+@router.delete("/session/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a session."""
+    store = get_transcript_store()
     orchestrator = get_orchestrator_service()
-    result = await orchestrator.get_session_transcript(session_id)
-    if not result:
-        raise HTTPException(404, "Session not found")
-    return result
+    try:
+        # Close orchestrator session if active
+        if session_id in orchestrator.active_sessions:
+            await orchestrator.close_session(session_id)
+        
+        # Delete from store
+        store.delete_session(session_id)
+        return {"session_id": session_id, "status": "deleted"}
+    except Exception as e:
+        logger.error(f"Failed to delete session: {e}")
+        raise HTTPException(500, f"Failed to delete session: {str(e)}")

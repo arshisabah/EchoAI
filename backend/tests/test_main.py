@@ -249,7 +249,8 @@ class TestWebSocketIntegration:
     @pytest.mark.asyncio
     async def test_websocket_connection(self):
         """Test WebSocket connection."""
-        async with AsyncClient(app=app, base_url="http://test") as ac:
+        from httpx import ASGITransport
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             # Note: Full WebSocket testing requires more complex setup
             # This is a placeholder for WebSocket integration tests
             pass
@@ -324,10 +325,14 @@ class TestEdgeCases:
 
 # Cleanup
 @pytest.fixture(autouse=True)
-def cleanup_after_test():
+async def cleanup_after_test():
     """Cleanup after each test."""
     yield
-    # Add cleanup logic here if needed
+    # Ensure all async tasks complete
+    try:
+        await asyncio.sleep(0.1)  # Allow pending tasks to complete
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
