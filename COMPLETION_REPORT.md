@@ -91,7 +91,7 @@ CodeQL Analysis: ✅ PASSED
 | **Emotion Guidance** | ✅ Ready | Rule-based |
 | **Analytics Panel** | ✅ Ready | Endpoint working |
 | **Summary Panel** | ✅ Ready | At meeting end |
-| **Data Persistence** | ✅ Working | SQLite database |
+| **Data Persistence** | ✅ Working | PostgreSQL database |
 | **Recording Download** | ✅ Ready | WAV file export |
 | **Transcript Download** | ✅ Ready | TXT/JSON/SRT |
 

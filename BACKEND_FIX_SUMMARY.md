@@ -47,7 +47,7 @@ The user reported that the backend was not connecting and requested a comprehens
 **Solution**:
 - Created `.env` file with:
   - App configuration (DEBUG, LOG_LEVEL)
-  - Database URL (SQLite fallback)
+  - Database URL (PostgreSQL configuration)
   - API key placeholders (OpenAI, Anthropic, Hugging Face)
   - CORS settings
   - Model configuration
@@ -86,7 +86,7 @@ The user reported that the backend was not connecting and requested a comprehens
 | Chat System | ✅ Ready | Broadcast to all |
 | WebRTC Signaling | ✅ Ready | Offer/Answer/ICE |
 | Meeting Recording | ✅ Ready | Audio mixer + WAV export |
-| Transcript Storage | ✅ Ready | SQLite database |
+| Transcript Storage | ✅ Ready | PostgreSQL database |
 | Analytics API | ✅ Ready | GET /rooms/{id}/analytics |
 | Summary API | ✅ Ready | GET /rooms/{id}/summary |
 | Task Extraction | ✅ Ready | POST /rooms/{id}/tasks/extract |
@@ -259,13 +259,12 @@ SETUP_GUIDE.md                                     # Created comprehensive guide
 ### Development
 - Backend: `python3 -m app.main` (port 8000)
 - Frontend: `npm run dev` (port 5173)
-- Database: SQLite (auto-created)
+- Database: PostgreSQL (configured via DATABASE_URL)
 
 ### Production Recommendations
-1. Use PostgreSQL instead of SQLite
-2. Add HTTPS/TLS
-3. Configure CORS to specific domains
-4. Set DEBUG=False
+1. Add HTTPS/TLS
+2. Configure CORS to specific domains
+3. Set DEBUG=False
 5. Use a reverse proxy (nginx)
 6. Add rate limiting
 7. Monitor API usage and costs (OpenAI)
@@ -276,7 +275,7 @@ SETUP_GUIDE.md                                     # Created comprehensive guide
 ### Current Configuration
 - Transcription: OpenAI Whisper API (fast, reliable)
 - Emotion: Fallback mode (instant, basic)
-- Database: SQLite (good for <100 concurrent users)
+- Database: PostgreSQL (production-ready)
 - WebSocket Timeout: 180s (supports long meetings)
 - Audio Buffering: ~2s before transcription
 
@@ -309,8 +308,7 @@ SETUP_GUIDE.md                                     # Created comprehensive guide
 1. **No Internet Access**: Cannot download AI models in current environment
 2. **Basic Emotion Detection**: Using fallback instead of sophisticated models  
 3. **No Diarization**: Speaker identification limited without models
-4. **SQLite**: Not ideal for high-concurrency production use
-5. **No User Management**: No user registration/authentication system
+4. **No User Management**: No user registration/authentication system
 
 ## Success Criteria Met
 
