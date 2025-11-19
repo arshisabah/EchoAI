@@ -161,6 +161,23 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                             console.log(`🎧 Listening... buffered ${data.buffered_duration}s`);
                             break;
 
+                        case 'peer_list':
+                            // ✅ FIX: Handle peer_list to initiate WebRTC connections with existing participants
+                            console.log('👥 Received peer list:', data.peers);
+                            if (onSignalingMessageRef.current && data.peers) {
+                                // Treat each existing peer as a new_participant so WebRTC connections are established
+                                data.peers.forEach(peer => {
+                                    console.log(`🤝 Initiating connection with existing peer: ${peer.username} (${peer.user_id})`);
+                                    onSignalingMessageRef.current({
+                                        type: 'new_participant',
+                                        user_id: peer.user_id,
+                                        username: peer.username,
+                                        from_peer_list: true
+                                    });
+                                });
+                            }
+                            break;
+
                         case 'new_participant':
                         case 'webrtc_offer':
                         case 'webrtc_answer':

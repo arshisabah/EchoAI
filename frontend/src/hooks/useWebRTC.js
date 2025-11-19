@@ -75,22 +75,35 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
 
   const createPeerConnection = useCallback((peerId) => {
     // don't create a connection to ourselves
-    if (!peerId || peerId === userId) return null;
+    if (!peerId || peerId === userId) {
+      console.log(`⏭️ Skipping peer connection creation (self or invalid): ${peerId}`);
+      return null;
+    }
 
     if (peerConnectionsRef.current.has(peerId)) {
+      console.log(`♻️ Reusing existing peer connection for ${peerId}`);
       return peerConnectionsRef.current.get(peerId);
     }
 
+    console.log(`🔧 Creating new peer connection for ${peerId}`);
     const pc = new RTCPeerConnection(RTC_CONFIGURATION);
 
     // add local tracks (if already available)
     const local = localStreamRef.current || WebRTCService.localStream;
     if (local) {
+      const tracks = local.getTracks();
+      console.log(`📤 Adding ${tracks.length} local tracks to peer connection for ${peerId}:`, 
+                  tracks.map(t => `${t.kind} (enabled: ${t.enabled})`));
       try {
-        local.getTracks().forEach(track => pc.addTrack(track, local));
+        tracks.forEach(track => {
+          const sender = pc.addTrack(track, local);
+          console.log(`✅ Added ${track.kind} track to peer ${peerId}`);
+        });
       } catch (err) {
-        console.warn("Failed to add local tracks to pc:", err);
+        console.error(`❌ Failed to add local tracks to peer ${peerId}:`, err);
       }
+    } else {
+      console.warn(`⚠️ No local stream available when creating peer connection for ${peerId}`);
     }
 
     // when remote track arrives, save it under peerId
@@ -292,6 +305,7 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
   }, [createPeerConnection, sendSignalingMessage, userId]);
 
   const handleParticipantLeft = useCallback((peerId) => {
+    console.log(`👋 Participant left: ${peerId}, cleaning up connection`);
     const pc = peerConnectionsRef.current.get(peerId);
     if (pc) {
       try { pc.close(); } catch (e) {}
@@ -307,6 +321,30 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
 
     // also remove from WebRTCService map
     try { WebRTCService.peerConnections.delete(peerId); } catch (e) {}
+  }, []);
+
+  const startScreenShare = useCallback(async () => {
+    try {
+      console.log('🖥️ Starting screen share');
+      const screenStream = await WebRTCService.startScreenShare();
+      console.log('✅ Screen share started successfully');
+      return screenStream;
+    } catch (err) {
+      console.error('❌ Failed to start screen share:', err);
+      setError(err?.message || String(err));
+      throw err;
+    }
+  }, []);
+
+  const stopScreenShare = useCallback(() => {
+    try {
+      console.log('🛑 Stopping screen share');
+      WebRTCService.stopScreenShare();
+      console.log('✅ Screen share stopped');
+    } catch (err) {
+      console.error('❌ Failed to stop screen share:', err);
+      setError(err?.message || String(err));
+    }
   }, []);
 
   // Cleanup on unmount
@@ -342,6 +380,8 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
     toggleAudio,
     handleSignalingMessage,
     handleParticipantLeft,
+    startScreenShare,
+    stopScreenShare,
   };
 };
 
