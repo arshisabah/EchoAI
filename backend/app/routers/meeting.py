@@ -811,7 +811,7 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
             recorder = get_recorder(room_id)
             if recorder and recorder.is_recording:
                 # Convert bytes to numpy array for recording
-                audio_array = bytes_to_numpy(audio_bytes, sample_rate=16000)
+                audio_array, _ = bytes_to_numpy(audio_bytes, sample_rate=16000)
                 recorder.add_audio_chunk(user_id, audio_array)
                 logger.debug(f"📼 Audio added to recorder for room {room_id}")
         except Exception as rec_err:

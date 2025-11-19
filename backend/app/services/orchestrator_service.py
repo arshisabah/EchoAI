@@ -140,8 +140,7 @@ class OrchestratorService:
 
             # Fallback decode
             if audio_array is None:
-                audio_array = bytes_to_numpy(audio_bytes, sample_rate=16000)
-                sample_rate = 16000
+                audio_array, sample_rate = bytes_to_numpy(audio_bytes, sample_rate=16000)
 
             # Empty or invalid audio
             if audio_array is None or len(audio_array) == 0:
