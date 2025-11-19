@@ -979,25 +979,25 @@ body {
   color: white;
 }
 
-.transcript-entry {
+.transcript-viewer .transcript-entry {
   border-bottom: 1px solid #1e293b;
   padding: 0.75rem 0;
 }
 
-.transcript-header {
+.transcript-viewer .transcript-header {
   display: flex;
   justify-content: space-between;
   font-size: 0.9rem;
   color: #94a3b8;
 }
 
-.transcript-text {
+.transcript-viewer .transcript-text {
   margin-top: 0.25rem;
   font-size: 1rem;
   color: #e2e8f0;
 }
 
-.transcript-meta {
+.transcript-viewer .transcript-meta {
   font-size: 0.85rem;
   color: #94a3b8;
   margin-top: 0.25rem;
