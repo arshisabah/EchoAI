@@ -641,17 +641,28 @@ async def meeting_websocket(
             if historical_transcripts:
                 logger.info(f"📜 Sending {len(historical_transcripts)} historical transcripts to {username}")
                 
+                # Get current room to map user_ids to usernames
+                current_room = room_manager.rooms.get(room_id)
+                
                 # Send historical transcripts in batches to avoid overwhelming the connection
                 batch_size = 10
                 for i in range(0, len(historical_transcripts), batch_size):
                     batch = historical_transcripts[i:i + batch_size]
                     
                     for entry in batch:
+                        # Try to get actual username from speaker ID
+                        speaker_id = entry.speaker or "unknown"
+                        speaker_name = speaker_id  # Default to speaker_id
+                        
+                        # Try to find the username from current participants
+                        if current_room and speaker_id in current_room.participants:
+                            speaker_name = current_room.participants[speaker_id].username
+                        
                         # Format each transcript entry to match live_transcript format
                         transcript_message = {
                             "type": "live_transcript",
-                            "user_id": entry.speaker or "unknown",
-                            "username": entry.speaker or "Unknown Speaker",
+                            "user_id": speaker_id,
+                            "username": speaker_name,
                             "text": entry.text,
                             "emotion": entry.emotions.get("emotion", "neutral") if entry.emotions else "neutral",
                             "confidence": entry.emotions.get("confidence", 0.0) if entry.emotions else 0.0,
