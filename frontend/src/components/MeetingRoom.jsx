@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff, MessageSquare,
@@ -35,6 +35,9 @@ const MeetingRoom = ({ userInfo }) => {
   const [emotionHistory, setEmotionHistory] = useState([]);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [showPostMeetingModal, setShowPostMeetingModal] = useState(false);
+
+  // ✅ FIX: Use ref to always have latest connection state
+  const isTranscriptConnectedRef = useRef(false);
 
   console.log("MeetingRoom Loaded → roomId:", roomId, "password:", roomPassword);
 
@@ -76,7 +79,7 @@ const MeetingRoom = ({ userInfo }) => {
   } = useWebRTC(roomId, userInfo.user_id, sendSignalingMessage);
 
   // ------------------------------
-  // AUDIO RECORDER - ✅ FIXED
+  // AUDIO RECORDER - ✅ FIXED: Use ref to avoid stale closure
   // ------------------------------
   const {
     isRecording,
@@ -84,14 +87,22 @@ const MeetingRoom = ({ userInfo }) => {
     startRecording,
     stopRecording,
   } = useAudioRecorder((pcmBytes) => {
-    // ✅ FIX: Now using isTranscriptConnected from useWebSocket
-    if (isTranscriptConnected) {
+    // ✅ FIX: Use ref.current to always get latest connection state
+    if (isTranscriptConnectedRef.current) {
         console.log("🎵 Sending audio chunk:", pcmBytes.length, "bytes");
         sendAudioChunk(pcmBytes);
     } else {
         console.warn("⚠️ Audio chunk dropped - WebSocket not connected");
     }
   });
+
+  // ------------------------------
+  // UPDATE CONNECTION REF - ✅ FIX: Keep ref in sync with connection state
+  // ------------------------------
+  useEffect(() => {
+    isTranscriptConnectedRef.current = isTranscriptConnected;
+    console.log("📡 Connection state updated - isTranscriptConnected:", isTranscriptConnected);
+  }, [isTranscriptConnected]);
 
   // ------------------------------
   // LOAD ROOM INFO → DETERMINE ROLE
