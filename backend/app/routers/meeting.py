@@ -4,12 +4,14 @@
 ✅ Proper handling of orchestrator responses
 ✅ Speaker diarization working
 ✅ Room name search endpoint added
+✅ WebSocket keepalive and idle monitoring
 """
 
 import asyncio
 import logging
 import json
 import base64
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -30,9 +32,14 @@ from app.services.summary_service import get_summary_service
 from app.services.audio_utils import bytes_to_numpy
 from app.modules.realtime_store import get_transcript_store
 from app.modules.audio_recorder import get_or_create_recorder, get_recorder, delete_recorder
+from app.utils.keepalive import send_keepalive, idle_monitor
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/meeting", tags=["Multi-User Meetings"])
+
+# WebSocket keepalive configuration
+KEEPALIVE_INTERVAL = 20  # Send ping every 20 seconds
+MAX_IDLE = 30 * 60  # Close connection after 30 minutes of inactivity
 
 
 # Request Models
@@ -535,16 +542,35 @@ async def meeting_websocket(
     password: Optional[str] = Query(None),
     role: str = Query("participant")
 ):
-    """Real-time meeting WebSocket."""
+    """
+    Real-time meeting WebSocket with keepalive and idle monitoring.
+    
+    Uses a three-task architecture:
+    1. Keepalive sender - sends periodic pings
+    2. Idle monitor - closes connection after MAX_IDLE inactivity
+    3. Receive loop - processes incoming messages
+    """
     room_manager = get_meeting_room_manager()
+    
+    # Track last received timestamp for idle monitoring
+    # Using list as mutable reference: [timestamp]
+    last_received_ref = [time.time()]
+    
+    # Stop event for background tasks
+    stop_event = asyncio.Event()
+    
+    # Background task references
+    keepalive_task = None
+    idle_monitor_task = None
+    
     try:
-        # Accept socket
+        # ✅ Accept socket ONCE at the start
         await websocket.accept()
 
         # Ensure room exists
         existing_room = room_manager.rooms.get(room_id)
         if not existing_room:
-            await websocket.send_json({"type": "error", "message": f"Room {room_id} not found"})
+            await room_manager.safe_send_text(websocket, {"type": "error", "message": f"Room {room_id} not found"})
             await websocket.close()
             return
 
@@ -573,7 +599,7 @@ async def meeting_websocket(
             )
         except Exception as e:
             logger.error(f"Failed to join room {room_id} for user {user_id}: {e}", exc_info=True)
-            await websocket.send_json({"type": "error", "message": str(e)})
+            await room_manager.safe_send_text(websocket, {"type": "error", "message": str(e)})
             await websocket.close()
             return
 
@@ -594,16 +620,16 @@ async def meeting_websocket(
             "timestamp": datetime.utcnow().isoformat()
         }, exclude_user_id=user_id)
 
-        # Send welcome + ack to the new user
+        # Send welcome + ack to the new user (using safe send)
         room_info = await room_manager.get_room_info(room_id)
-        await websocket.send_json({
+        await room_manager.safe_send_text(websocket, {
             "type": "welcome",
             "message": f"Welcome {username}!",
             "your_role": participant.role.value,
             "room_info": room_info
         })
 
-        await websocket.send_json({
+        await room_manager.safe_send_text(websocket, {
             "type": "connection_ack",
             "message": f"Connected successfully as {username}",
             "timestamp": datetime.utcnow().isoformat()
@@ -618,13 +644,13 @@ async def meeting_websocket(
                     continue
                 peers.append({"user_id": uid, "username": p.username})
 
-        await websocket.send_json({
+        await room_manager.safe_send_text(websocket, {
             "type": "peer_list",
             "peers": peers
         })
 
         # Echo a new_participant to the new user (self = True) to make client-side logic uniform
-        await websocket.send_json({
+        await room_manager.safe_send_text(websocket, {
             "type": "new_participant",
             "user_id": user_id,
             "username": username,
@@ -632,7 +658,7 @@ async def meeting_websocket(
             "self": True
         })
 
-        # ✅ FIX: Send historical transcripts to newly joined participant
+        # ✅ Send historical transcripts to newly joined participant
         # This ensures they can see what happened before they joined
         try:
             store = get_transcript_store()
@@ -670,7 +696,7 @@ async def meeting_websocket(
                             "timestamp": entry.timestamp.isoformat() if hasattr(entry.timestamp, 'isoformat') else str(entry.timestamp),
                             "is_historical": True  # Mark as historical so frontend can handle differently if needed
                         }
-                        await websocket.send_json(transcript_message)
+                        await room_manager.safe_send_text(websocket, transcript_message)
                     
                     # Small delay between batches to prevent overwhelming the connection
                     await asyncio.sleep(0.05)
@@ -679,22 +705,24 @@ async def meeting_websocket(
         except Exception as e:
             logger.error(f"Failed to send historical transcripts to {username}: {e}", exc_info=True)
 
-        # Main receive loop with extended timeout for long meetings
-        # Timeout extended to 180 seconds (3 minutes) to support 30+ minute meetings
-        while True:
+        # ✅ Start background tasks for keepalive and idle monitoring
+        keepalive_task = asyncio.create_task(
+            send_keepalive(websocket, KEEPALIVE_INTERVAL, stop_event)
+        )
+        idle_monitor_task = asyncio.create_task(
+            idle_monitor(websocket, MAX_IDLE, last_received_ref, stop_event)
+        )
+        
+        logger.info(f"Started keepalive and idle monitor for {username} in {room_id}")
+
+        # ✅ Main receive loop - no timeout needed, keepalive handles connection health
+        while not stop_event.is_set():
             try:
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=180)
-            except asyncio.TimeoutError:
-                # send keep-alive ping after 3 minutes of inactivity
-                try:
-                    await websocket.send_json({
-                        "type": "ping_timeout",
-                        "message": "Keep-alive: No message received within 180 seconds.",
-                        "timestamp": datetime.utcnow().isoformat()
-                    })
-                except Exception:
-                    pass
-                continue
+                data = await websocket.receive_text()
+                
+                # Update last received timestamp on ANY message
+                last_received_ref[0] = time.time()
+                
             except WebSocketDisconnect:
                 logger.info(f"WebSocketDisconnect for {username} in {room_id}")
                 break
@@ -711,9 +739,17 @@ async def meeting_websocket(
 
             message_type = message.get("type")
 
+            # ✅ Handle pong responses (updates last_received already done above)
+            if message_type == "pong":
+                logger.debug(f"Received pong from {username}")
+                continue
+
+            # Handle audio processing in background to avoid blocking receive loop
             if message_type == "audio_chunk":
-                await process_audio(
-                    room_id, user_id, username, message, room_manager, websocket
+                # TODO: Consider offloading to background task if processing takes too long
+                # For now, keeping inline to maintain order of audio chunks
+                asyncio.create_task(
+                    process_audio(room_id, user_id, username, message, room_manager, websocket)
                 )
 
             elif message_type == "chat":
@@ -724,10 +760,11 @@ async def meeting_websocket(
                     "timestamp": datetime.utcnow().isoformat()
                 }
                 await room_manager.broadcast_to_room(room_id, chat_message)
-                try:
-                    await websocket.send_json({"type": "chat_ack", "message": chat_message["message"]})
-                except Exception:
-                    pass
+                # Acknowledge chat (using safe send)
+                await room_manager.safe_send_text(websocket, {
+                    "type": "chat_ack", 
+                    "message": chat_message["message"]
+                })
 
             # WebRTC signaling routing: target_id must be present and will be forwarded
             elif message_type in {"webrtc_offer", "webrtc_answer", "ice_candidate"}:
@@ -738,28 +775,27 @@ async def meeting_websocket(
                     room = room_manager.rooms[room_id]
                     if target_id in room.participants:
                         target_ws = room.participants[target_id].websocket
-                        try:
-                            await target_ws.send_json({
-                                **message,
-                                "from_id": user_id,
-                                "timestamp": datetime.utcnow().isoformat()
-                            })
+                        # Use safe send for signaling messages
+                        success = await room_manager.safe_send_text(target_ws, {
+                            **message,
+                            "from_id": user_id,
+                            "timestamp": datetime.utcnow().isoformat()
+                        })
+                        if success:
                             logger.info(f"✅ Forwarded {message_type} from {username} to {target_id}")
-                        except Exception as e:
-                            logger.error(f"❌ Failed to forward {message_type} to {target_id}: {e}", exc_info=True)
+                        else:
+                            logger.error(f"❌ Failed to forward {message_type} to {target_id}")
                     else:
                         logger.warning(f"⚠️ Target {target_id} not found in room {room_id}. Available participants: {list(room.participants.keys())}")
                 else:
                     logger.warning(f"⚠️ Signaling message without target_id or room {room_id} missing. Message: {message_type}")
 
             elif message_type == "ping":
-                try:
-                    await websocket.send_json({
-                        "type": "pong",
-                        "timestamp": datetime.utcnow().isoformat()
-                    })
-                except Exception:
-                    pass
+                # Respond to client-initiated pings
+                await room_manager.safe_send_text(websocket, {
+                    "type": "pong",
+                    "timestamp": datetime.utcnow().isoformat()
+                })
 
             else:
                 # Unknown/other messages — log for debugging
@@ -767,20 +803,41 @@ async def meeting_websocket(
 
     except WebSocketDisconnect:
         logger.info(f"❌ {username} disconnected from {room_id}")
-        try:
-            await room_manager.leave_room(room_id, user_id)
-        except Exception:
-            logger.exception("Error during leave_room on WebSocketDisconnect")
     except Exception as e:
         logger.error(f"WebSocket error for {username} in {room_id}: {e}", exc_info=True)
+    finally:
+        # ✅ Signal background tasks to stop
+        stop_event.set()
+        
+        # ✅ Cancel and wait for background tasks
+        if keepalive_task:
+            keepalive_task.cancel()
+            try:
+                await keepalive_task
+            except asyncio.CancelledError:
+                pass
+        
+        if idle_monitor_task:
+            idle_monitor_task.cancel()
+            try:
+                await idle_monitor_task
+            except asyncio.CancelledError:
+                pass
+        
+        # ✅ Final cleanup: ensure the participant is removed
         try:
             await room_manager.leave_room(room_id, user_id)
         except Exception:
-            logger.exception("Error during leave_room on exception")
-    finally:
-        # final cleanup: ensure the participant is removed
+            logger.debug(f"Error during leave_room cleanup for {user_id}", exc_info=True)
+        
+        # ✅ Ensure websocket is closed
         try:
-            await room_manager.leave_room(room_id, user_id)
+            await websocket.close()
+        except Exception:
+            pass
+        
+        logger.info(f"WebSocket handler cleanup complete for {username} in {room_id}")
+
         except Exception:
             pass
 

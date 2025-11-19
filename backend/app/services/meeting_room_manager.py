@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Set, Any
 from dataclasses import dataclass, asdict
 from enum import Enum
+from fastapi import WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,27 @@ class MeetingRoomManager:
         self.broadcast_queue: asyncio.Queue = asyncio.Queue()
         self._broadcast_task = None
         logger.info("MeetingRoomManager initialized")
+    
+    async def safe_send_text(self, websocket: Any, message: Dict[str, Any]) -> bool:
+        """
+        Safely send a JSON message to a WebSocket, catching disconnect/runtime errors.
+        
+        Args:
+            websocket: WebSocket connection to send to
+            message: Message dictionary to send as JSON
+            
+        Returns:
+            True if send succeeded, False otherwise
+        """
+        try:
+            await websocket.send_json(message)
+            return True
+        except (WebSocketDisconnect, RuntimeError) as e:
+            logger.debug(f"Failed to send message (connection closed): {e}")
+            return False
+        except Exception as e:
+            logger.warning(f"Unexpected error sending message: {e}")
+            return False
     
     async def start_broadcasting(self):
         """Start the background broadcast task."""
@@ -332,11 +354,12 @@ class MeetingRoomManager:
             if user_id == exclude_user_id:
                 continue
             
-            try:
-                await participant.websocket.send_json(message)
-                participant.last_activity = datetime.utcnow() 
-            except Exception as e:
-                logger.warning(f"Failed to send to {user_id}: {e}")
+            # Use safe send wrapper to catch WebSocketDisconnect and RuntimeError
+            success = await self.safe_send_text(participant.websocket, message)
+            if success:
+                participant.last_activity = datetime.utcnow()
+            else:
+                logger.warning(f"Failed to send to {user_id}, marking for removal")
                 dead_connections.append(user_id)
         
         # Clean up dead connections
