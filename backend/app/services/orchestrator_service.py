@@ -169,22 +169,22 @@ class OrchestratorService:
 
             duration_sec = len(combined) / 16000
 
-            # Wait for at least 1.5 seconds OR detect silence boundary (0.8s silence at end)
-            # Reduced from 4.0s to 1.5s for better real-time responsiveness
-            if duration_sec < 1.5:
-                logger.debug(f"⏳ Buffering audio for session {session_id}: {duration_sec:.2f}s / 1.5s minimum")
+            # Wait for at least 0.8 seconds OR detect silence boundary (0.5s silence at end)
+            # Reduced from 1.5s to 0.8s for better real-time responsiveness
+            if duration_sec < 0.8:
+                logger.debug(f"⏳ Buffering audio for session {session_id}: {duration_sec:.2f}s / 0.8s minimum")
                 return {"type": "listening", "buffered_duration": duration_sec}
             
             # Check for silence boundary - wait for speaker to finish
-            # If no silence detected yet and duration < 3s, keep buffering
-            if duration_sec < 3.0:
-                # Check if there's a 0.8s silence at the end (reduced from 1.5s)
-                tail_samples = min(int(16000 * 0.8), len(combined))
+            # If no silence detected yet and duration < 2s, keep buffering
+            if duration_sec < 2.0:
+                # Check if there's a 0.5s silence at the end (reduced from 0.8s)
+                tail_samples = min(int(16000 * 0.5), len(combined))
                 tail = combined[-tail_samples:]
                 tail_energy = np.sqrt(np.mean(tail ** 2))
                 
-                logger.debug(f"🔊 Tail energy check for session {session_id}: {tail_energy:.6f} (threshold: 0.008)")
-                if tail_energy >= 0.008:  # Still speaking (increased from 0.005 to be more permissive)
+                logger.debug(f"🔊 Tail energy check for session {session_id}: {tail_energy:.6f} (threshold: 0.015)")
+                if tail_energy >= 0.015:  # Still speaking (increased from 0.008 to be more permissive)
                     logger.debug(f"🗣️ Still speaking - buffering more audio for session {session_id}")
                     return {"type": "listening", "buffered_duration": duration_sec}
 
