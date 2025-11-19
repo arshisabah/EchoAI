@@ -632,6 +632,42 @@ async def meeting_websocket(
             "self": True
         })
 
+        # ✅ FIX: Send historical transcripts to newly joined participant
+        # This ensures they can see what happened before they joined
+        try:
+            store = get_transcript_store()
+            historical_transcripts = store.get_session_transcript(room_id)
+            
+            if historical_transcripts:
+                logger.info(f"📜 Sending {len(historical_transcripts)} historical transcripts to {username}")
+                
+                # Send historical transcripts in batches to avoid overwhelming the connection
+                batch_size = 10
+                for i in range(0, len(historical_transcripts), batch_size):
+                    batch = historical_transcripts[i:i + batch_size]
+                    
+                    for entry in batch:
+                        # Format each transcript entry to match live_transcript format
+                        transcript_message = {
+                            "type": "live_transcript",
+                            "user_id": entry.speaker or "unknown",
+                            "username": entry.speaker or "Unknown Speaker",
+                            "text": entry.text,
+                            "emotion": entry.emotions.get("emotion", "neutral") if entry.emotions else "neutral",
+                            "confidence": entry.emotions.get("confidence", 0.0) if entry.emotions else 0.0,
+                            "emotion_guidance": {},
+                            "timestamp": entry.timestamp.isoformat() if hasattr(entry.timestamp, 'isoformat') else str(entry.timestamp),
+                            "is_historical": True  # Mark as historical so frontend can handle differently if needed
+                        }
+                        await websocket.send_json(transcript_message)
+                    
+                    # Small delay between batches to prevent overwhelming the connection
+                    await asyncio.sleep(0.05)
+                
+                logger.info(f"✅ Historical transcripts sent to {username}")
+        except Exception as e:
+            logger.error(f"Failed to send historical transcripts to {username}: {e}", exc_info=True)
+
         # Main receive loop with extended timeout for long meetings
         # Timeout extended to 180 seconds (3 minutes) to support 30+ minute meetings
         while True:
