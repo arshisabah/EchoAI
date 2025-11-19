@@ -632,6 +632,53 @@ async def meeting_websocket(
             "self": True
         })
 
+        # ✅ FIX: Send historical transcripts to newly joined participant
+        # This ensures they can see what happened before they joined
+        try:
+            store = get_transcript_store()
+            historical_transcripts = store.get_session_transcript(room_id)
+            
+            if historical_transcripts:
+                logger.info(f"📜 Sending {len(historical_transcripts)} historical transcripts to {username}")
+                
+                # Get current room to map user_ids to usernames
+                current_room = room_manager.rooms.get(room_id)
+                
+                # Send historical transcripts in batches to avoid overwhelming the connection
+                batch_size = 10
+                for i in range(0, len(historical_transcripts), batch_size):
+                    batch = historical_transcripts[i:i + batch_size]
+                    
+                    for entry in batch:
+                        # Try to get actual username from speaker ID
+                        speaker_id = entry.speaker or "unknown"
+                        speaker_name = speaker_id  # Default to speaker_id
+                        
+                        # Try to find the username from current participants
+                        if current_room and speaker_id in current_room.participants:
+                            speaker_name = current_room.participants[speaker_id].username
+                        
+                        # Format each transcript entry to match live_transcript format
+                        transcript_message = {
+                            "type": "live_transcript",
+                            "user_id": speaker_id,
+                            "username": speaker_name,
+                            "text": entry.text,
+                            "emotion": entry.emotions.get("emotion", "neutral") if entry.emotions else "neutral",
+                            "confidence": entry.emotions.get("confidence", 0.0) if entry.emotions else 0.0,
+                            "emotion_guidance": {},
+                            "timestamp": entry.timestamp.isoformat() if hasattr(entry.timestamp, 'isoformat') else str(entry.timestamp),
+                            "is_historical": True  # Mark as historical so frontend can handle differently if needed
+                        }
+                        await websocket.send_json(transcript_message)
+                    
+                    # Small delay between batches to prevent overwhelming the connection
+                    await asyncio.sleep(0.05)
+                
+                logger.info(f"✅ Historical transcripts sent to {username}")
+        except Exception as e:
+            logger.error(f"Failed to send historical transcripts to {username}: {e}", exc_info=True)
+
         # Main receive loop with extended timeout for long meetings
         # Timeout extended to 180 seconds (3 minutes) to support 30+ minute meetings
         while True:
@@ -748,6 +795,7 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
 
         # 2️⃣ Decode base64 → bytes
         audio_bytes = base64.b64decode(audio_base64)
+        logger.debug(f"🎵 Processing audio chunk from {username}: {len(audio_bytes)} bytes")
 
         # 2.5️⃣ Add audio to recorder for meeting recording
         try:
@@ -808,6 +856,7 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
                                                    context={"username": username, "room_id": room_id, "speaker": speaker})
 
             # Broadcast transcript + emotion -> uses manager's broadcast_transcript
+            logger.info(f"📢 Broadcasting transcript from {username} in {room_id}: '{text[:50]}...'")
             await room_manager.broadcast_transcript(
                 room_id=room_id,
                 user_id=user_id,
