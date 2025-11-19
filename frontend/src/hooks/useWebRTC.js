@@ -95,19 +95,29 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
 
     // when remote track arrives, save it under peerId
     pc.ontrack = (event) => {
+      console.log(`📹 ontrack fired for peer ${peerId}`, event);
       const stream = event.streams && event.streams[0] ? event.streams[0] : null;
-      if (!stream) return;
+      if (!stream) {
+        console.warn(`⚠️ No stream in ontrack event for peer ${peerId}`);
+        return;
+      }
+
+      console.log(`✅ Remote stream received from peer ${peerId}:`, stream.id, 
+                  `video tracks: ${stream.getVideoTracks().length}`, 
+                  `audio tracks: ${stream.getAudioTracks().length}`);
 
       setRemoteStreamsMap(prev => {
         const updated = new Map(prev);
         updated.set(peerId, stream);
         remoteStreamsMapRef.current = updated;
+        console.log(`📺 Updated remote streams map, now has ${updated.size} streams`);
         return updated;
       });
     };
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
+        console.log(`🧊 ICE candidate generated for peer ${peerId}:`, event.candidate.candidate.substring(0, 50) + '...');
         // send candidate to the specific peer via signaling server
         try {
           sendSignalingMessage({
@@ -116,15 +126,21 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
             candidate: event.candidate,
             from_id: userId,
           });
+          console.log(`✅ ICE candidate sent to peer ${peerId}`);
         } catch (err) {
-          console.warn("Failed to send ICE candidate:", err);
+          console.error(`❌ Failed to send ICE candidate to peer ${peerId}:`, err);
         }
       }
     };
 
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState;
-      if (state === "failed" || state === "disconnected" || state === "closed") {
+      console.log(`🔗 Connection state changed for peer ${peerId}: ${state}`);
+      
+      if (state === "connected") {
+        console.log(`✅ WebRTC connection established with peer ${peerId}`);
+      } else if (state === "failed" || state === "disconnected" || state === "closed") {
+        console.warn(`❌ Connection ${state} for peer ${peerId}, cleaning up`);
         // cleanup remote stream and pc
         setRemoteStreamsMap(prev => {
           const updated = new Map(prev);
@@ -151,16 +167,26 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
   const handleSignalingMessage = useCallback(async (data) => {
     const { type, sdp, candidate, from_id, user_id } = data;
 
+    console.log(`📡 Handling signaling message:`, type, `from:`, from_id || user_id);
+
     try {
       if (type === "webrtc_offer") {
         // incoming offer from another peer -> create PC, set remote desc, answer
         const from = from_id || data.from || user_id;
-        if (!from) return;
+        if (!from) {
+          console.error('❌ webrtc_offer: no from_id');
+          return;
+        }
 
+        console.log(`📨 Received WebRTC offer from ${from}`);
         const pc = createPeerConnection(from);
-        if (!pc) return;
+        if (!pc) {
+          console.error(`❌ Failed to create peer connection for ${from}`);
+          return;
+        }
 
         await pc.setRemoteDescription({ type: "offer", sdp });
+        console.log(`✅ Set remote description (offer) for peer ${from}`);
 
         // ensure local tracks are attached before creating answer
         const local = localStreamRef.current || WebRTCService.localStream;
@@ -177,6 +203,7 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
 
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
+        console.log(`✅ Created and set local description (answer) for peer ${from}`);
 
         sendSignalingMessage({
           type: "webrtc_answer",
@@ -184,37 +211,55 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
           sdp: answer.sdp,
           from_id: userId,
         });
+        console.log(`📤 Sent WebRTC answer to peer ${from}`);
       }
 
       if (type === "webrtc_answer") {
         const from = from_id || data.from || user_id;
+        console.log(`📨 Received WebRTC answer from ${from}`);
         const pc = peerConnectionsRef.current.get(from);
         if (pc && sdp) {
           await pc.setRemoteDescription({ type: "answer", sdp });
+          console.log(`✅ Set remote description (answer) for peer ${from}`);
+        } else {
+          console.error(`❌ No peer connection found for ${from} or missing SDP`);
         }
       }
 
       if (type === "ice_candidate" && candidate) {
         const from = from_id || data.from || user_id;
+        console.log(`🧊 Received ICE candidate from ${from}`);
         const pc = peerConnectionsRef.current.get(from);
         if (pc) {
           try {
             // candidate might already be an RTCIceCandidateInit
             await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            console.log(`✅ Added ICE candidate for peer ${from}`);
           } catch (err) {
-            console.warn("addIceCandidate failed:", err);
+            console.error(`❌ addIceCandidate failed for peer ${from}:`, err);
           }
+        } else {
+          console.warn(`⚠️ No peer connection found for ${from} when adding ICE candidate`);
         }
       }
 
       if (type === "new_participant") {
         // server informs that a new participant is available (peerId)
         const newPeerId = data.user_id || data.userId;
-        if (!newPeerId || newPeerId === userId) return;
+        console.log(`👤 New participant notification:`, newPeerId, `(self: ${data.self})`);
+        
+        if (!newPeerId || newPeerId === userId) {
+          console.log(`⏭️ Skipping self or invalid peer ID`);
+          return;
+        }
 
+        console.log(`🤝 Creating peer connection and sending offer to ${newPeerId}`);
         // create pc and start offer
         const pc = createPeerConnection(newPeerId);
-        if (!pc) return;
+        if (!pc) {
+          console.error(`❌ Failed to create peer connection for ${newPeerId}`);
+          return;
+        }
 
         // ensure local tracks attached
         const local = localStreamRef.current || WebRTCService.localStream;
@@ -230,6 +275,7 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
         // create offer and send
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
+        console.log(`✅ Created and set local description (offer) for peer ${newPeerId}`);
 
         sendSignalingMessage({
           type: "webrtc_offer",
@@ -237,9 +283,10 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
           sdp: offer.sdp,
           from_id: userId,
         });
+        console.log(`📤 Sent WebRTC offer to peer ${newPeerId}`);
       }
     } catch (err) {
-      console.error("Signaling handler error:", err);
+      console.error("❌ Signaling handler error:", err);
       setError(err?.message || String(err));
     }
   }, [createPeerConnection, sendSignalingMessage, userId]);
