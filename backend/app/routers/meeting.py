@@ -732,6 +732,8 @@ async def meeting_websocket(
             # WebRTC signaling routing: target_id must be present and will be forwarded
             elif message_type in {"webrtc_offer", "webrtc_answer", "ice_candidate"}:
                 target_id = message.get("target_id")
+                logger.info(f"📡 WebRTC signaling: {message_type} from {username} ({user_id}) to {target_id} in room {room_id}")
+                
                 if target_id and room_id in room_manager.rooms:
                     room = room_manager.rooms[room_id]
                     if target_id in room.participants:
@@ -742,12 +744,13 @@ async def meeting_websocket(
                                 "from_id": user_id,
                                 "timestamp": datetime.utcnow().isoformat()
                             })
+                            logger.info(f"✅ Forwarded {message_type} from {username} to {target_id}")
                         except Exception as e:
-                            logger.warning(f"Failed to forward signaling to {target_id}: {e}", exc_info=True)
+                            logger.error(f"❌ Failed to forward {message_type} to {target_id}: {e}", exc_info=True)
                     else:
-                        logger.warning(f"⚠️ Target {target_id} not found in {room_id}")
+                        logger.warning(f"⚠️ Target {target_id} not found in room {room_id}. Available participants: {list(room.participants.keys())}")
                 else:
-                    logger.warning("Signaling message without target_id or room missing")
+                    logger.warning(f"⚠️ Signaling message without target_id or room {room_id} missing. Message: {message_type}")
 
             elif message_type == "ping":
                 try:
@@ -787,15 +790,21 @@ async def meeting_websocket(
 async def process_audio(room_id, user_id, username, message, room_manager, websocket):
     """✅ FIXED: Process audio chunk with proper format handling"""
     try:
+        logger.info(f"🎵 process_audio called - room: {room_id}, user: {username} ({user_id})")
+        
         # 1️⃣ Extract base64 audio from message
         audio_base64 = message.get("audio") or message.get("audio_data") or message.get("data", "")
         if not audio_base64:
-            logger.warning(f"No audio data found for user {username} in room {room_id}")
+            logger.warning(f"❌ No audio data found for user {username} in room {room_id}")
             return
 
         # 2️⃣ Decode base64 → bytes
-        audio_bytes = base64.b64decode(audio_base64)
-        logger.debug(f"🎵 Processing audio chunk from {username}: {len(audio_bytes)} bytes")
+        try:
+            audio_bytes = base64.b64decode(audio_base64)
+            logger.info(f"✅ Decoded audio chunk from {username}: {len(audio_bytes)} bytes")
+        except Exception as decode_err:
+            logger.error(f"❌ Base64 decode failed for {username}: {decode_err}")
+            return
 
         # 2.5️⃣ Add audio to recorder for meeting recording
         try:
@@ -804,28 +813,32 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
                 # Convert bytes to numpy array for recording
                 audio_array = bytes_to_numpy(audio_bytes, sample_rate=16000)
                 recorder.add_audio_chunk(user_id, audio_array)
+                logger.debug(f"📼 Audio added to recorder for room {room_id}")
         except Exception as rec_err:
-            logger.warning(f"Failed to add audio to recorder: {rec_err}")
+            logger.warning(f"⚠️ Failed to add audio to recorder for room {room_id}: {rec_err}")
 
         # 3️⃣ Run unified AI pipeline via orchestrator
+        logger.info(f"🔧 Calling orchestrator for room {room_id}, user {username} with {len(audio_bytes)} bytes")
         orchestrator = get_orchestrator_service()
         result = await orchestrator.process_audio_chunk(
             audio_bytes=audio_bytes,
             session_id=room_id,
             participant_id=user_id
         )
+        logger.info(f"✅ Orchestrator returned result for room {room_id}: {type(result).__name__ if result else 'None'}")
 
         # 🔹 Handle lightweight "listening" heartbeats
         if result and result.get("type") == "listening":
+            logger.debug(f"⏳ Buffering audio for {username} in {room_id}: {result.get('buffered_duration', 0):.2f}s")
             try:
                 await websocket.send_json(result)  # send only to this user (not broadcast)
-            except Exception:
-                pass
+            except Exception as send_err:
+                logger.warning(f"⚠️ Failed to send listening status to {username}: {send_err}")
             return
 
         # 4️⃣ Skip empty result
         if not result:
-            logger.debug(f"No result from orchestrator for user {username} in {room_id}")
+            logger.debug(f"⚠️ No result from orchestrator for user {username} in {room_id}")
             return
 
         # ✅ FIX: Handle both single and multi-speaker responses

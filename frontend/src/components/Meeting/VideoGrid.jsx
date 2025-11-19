@@ -8,10 +8,15 @@ const VideoTile = ({ stream, username, isLocal, isMuted, isVideoOff, isActiveSpe
   useEffect(() => {
     if (videoRef.current && stream instanceof MediaStream) {
       if (videoRef.current.srcObject !== stream) {
+        console.log(`📺 Setting video srcObject for ${username}:`, stream.id, 
+                    `video tracks: ${stream.getVideoTracks().length}`, 
+                    `audio tracks: ${stream.getAudioTracks().length}`);
         videoRef.current.srcObject = stream;
       }
+    } else if (!stream) {
+      console.warn(`⚠️ No stream available for ${username}`);
     }
-  }, [stream]);
+  }, [stream, username]);
 
   return (
     <div className={`video-tile ${isLocal ? 'local' : 'remote'} ${isActiveSpeaker ? 'active-speaker' : ''}`}>
@@ -65,15 +70,25 @@ const VideoGrid = ({
       isMuted: !isLocalAudioEnabled,
       isVideoOff: !isLocalVideoEnabled
     },
-    ...otherParticipants.map(p => ({
-      user_id: p.user_id,
-      username: p.username,
-      stream: remoteStreams.get(p.user_id) || null,  // ✅ ALWAYS FROM MAP
-      isLocal: false,
-      isMuted: !p.is_audio_on,
-      isVideoOff: !p.is_video_on
-    }))
+    ...otherParticipants.map(p => {
+      const remoteStream = remoteStreams.get(p.user_id);
+      if (!remoteStream) {
+        console.warn(`⚠️ No remote stream found for participant ${p.username} (${p.user_id})`);
+      } else {
+        console.log(`✅ Remote stream exists for ${p.username} (${p.user_id}):`, remoteStream.id);
+      }
+      return {
+        user_id: p.user_id,
+        username: p.username,
+        stream: remoteStream || null,  // ✅ ALWAYS FROM MAP
+        isLocal: false,
+        isMuted: !p.is_audio_on,
+        isVideoOff: !p.is_video_on
+      };
+    })
   ];
+
+  console.log(`📊 VideoGrid rendering ${combinedParticipants.length} participants, remote streams: ${remoteStreams.size}`);
 
   return (
     <div className={`video-grid grid-${Math.min(combinedParticipants.length, 4)}`}>

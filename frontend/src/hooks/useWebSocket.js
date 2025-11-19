@@ -90,21 +90,28 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
 
                         case 'participant_joined':
                             console.log('👤 User joined:', data.username);
-                            setParticipants((prev) => {
-                                const exists = prev.some(p => p.user_id === data.user_id);
-                                if (!exists) {
-                                    return [...prev, {
-                                        user_id: data.user_id,
-                                        username: data.username,
-                                        role: data.role,
-                                        is_speaking: false,
-                                        is_muted: false,
-                                        is_video_on: true,
-                                        is_audio_on: true
-                                    }];
-                                }
-                                return prev;
-                            });
+                            // ✅ FIX: Use full participant list from backend if available
+                            if (data.participants && Array.isArray(data.participants)) {
+                                console.log('📋 Updating participant list from backend:', data.participants.length, 'participants');
+                                setParticipants(data.participants);
+                            } else {
+                                // Fallback: add participant manually
+                                setParticipants((prev) => {
+                                    const exists = prev.some(p => p.user_id === data.user_id);
+                                    if (!exists) {
+                                        return [...prev, {
+                                            user_id: data.user_id,
+                                            username: data.username,
+                                            role: data.role,
+                                            is_speaking: false,
+                                            is_muted: false,
+                                            is_video_on: false,  // ✅ FIX: Match backend default
+                                            is_audio_on: true
+                                        }];
+                                    }
+                                    return prev;
+                                });
+                            }
                             break;
 
                         case 'participant_left':
@@ -159,6 +166,23 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
 
                         case 'listening':
                             console.log(`🎧 Listening... buffered ${data.buffered_duration}s`);
+                            break;
+
+                        case 'peer_list':
+                            // ✅ FIX: Handle peer_list to initiate WebRTC connections with existing participants
+                            console.log('👥 Received peer list:', data.peers);
+                            if (onSignalingMessageRef.current && data.peers) {
+                                // Treat each existing peer as a new_participant so WebRTC connections are established
+                                data.peers.forEach(peer => {
+                                    console.log(`🤝 Initiating connection with existing peer: ${peer.username} (${peer.user_id})`);
+                                    onSignalingMessageRef.current({
+                                        type: 'new_participant',
+                                        user_id: peer.user_id,
+                                        username: peer.username,
+                                        from_peer_list: true
+                                    });
+                                });
+                            }
                             break;
 
                         case 'new_participant':

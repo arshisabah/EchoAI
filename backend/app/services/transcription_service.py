@@ -132,8 +132,11 @@ class TranscriptionService:
     ) -> List[ASRResult]:
         """Transcribe audio chunk and return results with improved VAD."""
         
+        logger.info(f"🎙️ TranscriptionService: Starting transcription for session {session_id}, {len(audio_array)} samples")
+        
         # --- Preprocess audio array ---
         if audio_array.ndim > 1:  # Stereo → mono
+            logger.debug(f"Converting stereo to mono for session {session_id}")
             audio_array = np.mean(audio_array, axis=1)
 
         # Normalize amplitude to [-1, 1]
@@ -141,14 +144,17 @@ class TranscriptionService:
 
         # Improved Voice Activity Detection
         if not self.detect_voice_activity(audio_array, sample_rate):
-            logger.debug("No voice activity detected; skipping chunk.")
+            logger.debug(f"No voice activity detected for session {session_id}; skipping chunk.")
             return []
 
         if len(audio_array) == 0:
+            logger.warning(f"Empty audio array for session {session_id}")
             return []
 
         start_time = time.time()
 
+        logger.info(f"🔧 Using transcription backend: {self.model_type} for session {session_id}")
+        
         # Route to appropriate method
         if self.model_type == "openai_api":
             return await self._transcribe_openai_api(audio_array, sample_rate, start_time)
@@ -157,7 +163,7 @@ class TranscriptionService:
         elif self.model_type == "whisper":
             return await self._transcribe_whisper(audio_array, start_time)
         else:
-            logger.error("No transcription backend available")
+            logger.error(f"❌ No transcription backend available for session {session_id}")
             return []
 
     async def _transcribe_openai_api(
@@ -168,6 +174,7 @@ class TranscriptionService:
     ) -> List[ASRResult]:
         """Transcribe using OpenAI Whisper API."""
         try:
+            logger.info(f"🌐 Calling OpenAI Whisper API - audio length: {len(audio_array)} samples")
             from openai import AsyncOpenAI
             from app.core.config import settings
             import io
@@ -181,6 +188,8 @@ class TranscriptionService:
             audio_io.seek(0)
             audio_io.name = "audio.wav"
 
+            logger.debug(f"📤 Sending {audio_io.tell()} bytes to OpenAI API")
+
             # Call OpenAI API
             response = await client.audio.transcriptions.create(
                 model="whisper-1",
@@ -190,8 +199,11 @@ class TranscriptionService:
             )
 
             text = response.text.strip()
+            
+            logger.info(f"✅ OpenAI API response received: '{text[:100]}...'")
 
             if not text:
+                logger.debug("Empty transcription result from OpenAI API")
                 return []
 
             # Extract words with timestamps if available
@@ -206,17 +218,21 @@ class TranscriptionService:
                     }
                     for word in response.words
                 ]
+                logger.debug(f"Extracted {len(words)} word timestamps")
 
             # ✅ FIX: Don't assign speaker here - let orchestrator handle it
+            processing_time = (time.time() - start_time) * 1000
+            logger.info(f"⏱️ OpenAI transcription completed in {processing_time:.2f}ms")
+            
             return [ASRResult(
                 text=text,
                 confidence=1.0,
                 words=words,
-                processing_time_ms=(time.time() - start_time) * 1000,
+                processing_time_ms=processing_time,
                 speaker=None  # ✅ Changed from "Speaker_1"
             )]
         except Exception as e:
-            logger.error(f"OpenAI API transcription failed: {e}")
+            logger.error(f"❌ OpenAI API transcription failed: {e}", exc_info=True)
             return []
 
     async def _transcribe_whisperx(

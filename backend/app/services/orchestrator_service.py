@@ -80,6 +80,8 @@ class OrchestratorService:
     # ==========================================================
     async def process_audio_chunk(self, audio_bytes: bytes, session_id: str, participant_id=None):
         try:
+            logger.info(f"🎵 Processing audio chunk - session: {session_id}, participant: {participant_id}, bytes: {len(audio_bytes)}")
+            
             # Ensure session exists
             session = self.active_sessions.setdefault(session_id, SessionData(session_id))
             session.last_activity = datetime.utcnow()
@@ -115,10 +117,12 @@ class OrchestratorService:
 
             # Empty or invalid audio
             if audio_array is None or len(audio_array) == 0:
+                logger.debug(f"⚠️ Empty or invalid audio array for session {session_id}")
                 return None
 
             # Skip silence
             if np.abs(audio_array).mean() < 0.004:
+                logger.debug(f"🔇 Skipping silence for session {session_id} (mean amplitude: {np.abs(audio_array).mean():.6f})")
                 return None
 
             # Normalize
@@ -146,6 +150,7 @@ class OrchestratorService:
             # Wait for at least 1.5 seconds OR detect silence boundary (0.8s silence at end)
             # Reduced from 4.0s to 1.5s for better real-time responsiveness
             if duration_sec < 1.5:
+                logger.debug(f"⏳ Buffering audio for session {session_id}: {duration_sec:.2f}s / 1.5s minimum")
                 return {"type": "listening", "buffered_duration": duration_sec}
             
             # Check for silence boundary - wait for speaker to finish
@@ -156,7 +161,9 @@ class OrchestratorService:
                 tail = combined[-tail_samples:]
                 tail_energy = np.sqrt(np.mean(tail ** 2))
                 
+                logger.debug(f"🔊 Tail energy check for session {session_id}: {tail_energy:.6f} (threshold: 0.008)")
                 if tail_energy >= 0.008:  # Still speaking (increased from 0.005 to be more permissive)
+                    logger.debug(f"🗣️ Still speaking - buffering more audio for session {session_id}")
                     return {"type": "listening", "buffered_duration": duration_sec}
 
             # Clear buffer after processing
@@ -165,35 +172,45 @@ class OrchestratorService:
 
             # Whisper empty reshape prevention
             if len(audio_array) < 300:
-                logger.warning("⚠️ Chunk too small, skipping.")
+                logger.warning(f"⚠️ Chunk too small for session {session_id} ({len(audio_array)} samples), skipping.")
                 return None
 
             # ---------- STEP 3: TRANSCRIBE ----------
+            logger.info(f"🎙️ Starting transcription for session {session_id} - {duration_sec:.2f}s audio ({len(audio_array)} samples)")
             asr_results = await self.transcription_service.transcribe_chunk(
                 audio_array, session_id, 16000
             )
+            logger.info(f"📝 Transcription complete for session {session_id} - {len(asr_results)} result(s)")
 
             processed = []
             for r in asr_results:
                 text = (r.text or "").strip()
                 if not text:
+                    logger.debug(f"⚠️ Empty transcription result for session {session_id}, skipping")
                     continue
+
+                logger.info(f"💬 Transcribed text for session {session_id}: '{text[:100]}...' (confidence: {r.confidence:.2f})")
 
                 # ✅ FIX: Use participant_id if provided, otherwise identify speaker
                 if participant_id:
                     speaker = participant_id
+                    logger.debug(f"👤 Using provided participant_id as speaker: {speaker}")
                 else:
                     speaker = await self.speaker_service.identify_speaker(
                         audio_array, session_id, 16000
                     )
+                    logger.debug(f"👤 Identified speaker: {speaker}")
 
                 # Emotion (safe)
                 try:
+                    logger.debug(f"🎭 Analyzing emotion for session {session_id}")
                     emotion = await analyze_text_and_audio_combined(
                         text=text, audio_array=audio_array,
                         sample_rate=16000, text_weight=0.6, audio_weight=0.4
                     )
-                except:
+                    logger.debug(f"🎭 Emotion detected: {emotion.get('emotion', 'neutral')} (confidence: {emotion.get('confidence', 0):.2f})")
+                except Exception as emotion_err:
+                    logger.warning(f"⚠️ Emotion analysis failed for session {session_id}: {emotion_err}")
                     emotion = {"emotion": "neutral", "confidence": 0, "scores": {}}
 
                 entry = {
@@ -238,14 +255,17 @@ class OrchestratorService:
 
             # ✅ FIX: Return correct format expected by meeting.py
             if len(processed) == 1:
+                logger.info(f"✅ Returning single entry for session {session_id}: speaker={processed[0]['speaker']}")
                 return processed[0]
             elif len(processed) > 1:
+                logger.info(f"✅ Returning {len(processed)} multi-speaker entries for session {session_id}")
                 return {"type": "multi_speaker_chunk", "entries": processed}
             else:
+                logger.warning(f"⚠️ No valid entries processed for session {session_id}")
                 return None
 
         except Exception as e:
-            logger.exception(f"❌ process_audio_chunk failed: {e}")
+            logger.exception(f"❌ process_audio_chunk failed for session {session_id}: {e}")
             return None
 
     # ==========================================================
