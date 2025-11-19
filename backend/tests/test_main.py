@@ -10,7 +10,7 @@ from httpx import AsyncClient
 import numpy as np
 import base64
 
-from backend.app.main import app
+from app.main import app
 from app.services.audio_utils import bytes_to_numpy
 from app.services.transcription_service import get_transcription_service
 from app.services.emotion_analysis import get_emotion_service
