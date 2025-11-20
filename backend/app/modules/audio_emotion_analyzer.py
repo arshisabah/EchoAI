@@ -13,8 +13,8 @@ import numpy as np
 import torch
 
 # Set HuggingFace to offline mode to avoid network errors when models aren't available
-os.environ['HF_HUB_OFFLINE'] = '1'
-os.environ['TRANSFORMERS_OFFLINE'] = '1'
+os.environ['HF_HUB_OFFLINE'] = '0'
+os.environ['TRANSFORMERS_OFFLINE'] = '0'
 
 from transformers import (
     Wav2Vec2ForSequenceClassification,
@@ -154,3 +154,28 @@ def analyze_audio_emotion(audio_array: np.ndarray, sample_rate: int = 16000) -> 
             "confidence": 0.5,
             "scores": {"neutral": 0.5, "happy": 0.2, "sad": 0.15, "angry": 0.1, "fearful": 0.05}
         }
+
+import atexit
+
+def cleanup_emotion_model():
+    """Clean up emotion model resources on shutdown."""
+    global _model, _feature_extractor, _processor
+    try:
+        if _model is not None:
+            del _model
+        if _feature_extractor is not None:
+            del _feature_extractor
+        if _processor is not None:
+            del _processor
+        
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+        logger.info("✅ Emotion model resources cleaned up")
+    except Exception as e:
+        logger.warning(f"Error during cleanup: {e}")
+
+# Register cleanup
+atexit.register(cleanup_emotion_model)

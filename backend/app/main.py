@@ -11,8 +11,11 @@ from fastapi.responses import JSONResponse, FileResponse
 import time
 import psutil
 import os
+import warnings
 
-
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
 from app.core.config import settings
 from app.core.logging_config import setup_logging
 from app.db import init_db
