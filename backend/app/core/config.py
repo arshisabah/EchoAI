@@ -30,7 +30,10 @@ class Settings(BaseSettings):
     # DATABASE
     # -------------------------------------------------------------------
     SESSION_STORE_TYPE: str = os.getenv("SESSION_STORE_TYPE", "file")
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://echoai_user:EchoAI123@localhost:5432/echoai")
+    DATABASE_URL: str = os.getenv(
+        "DATABASE_URL", 
+        f"postgresql://{os.getenv('USER', 'postgres')}@localhost:5432/echoai"
+    )
 
     # -------------------------------------------------------------------
     # AI MODELS
