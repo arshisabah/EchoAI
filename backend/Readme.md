@@ -25,6 +25,8 @@ Production-ready real-time meeting intelligence backend with AI-powered transcri
 
 ## 🚀 Quick Start
 
+> **🍎 macOS Users**: See the [macOS Setup Guide](../README_MACOS.md) for optimized setup instructions for Apple Silicon and Intel Macs.
+
 ### Prerequisites
 
 - Python 3.10+
