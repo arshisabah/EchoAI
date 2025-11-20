@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
     ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
     HUGGING_FACE_TOKEN: Optional[str] = os.getenv("HUGGING_FACE_TOKEN")
+    DEEPGRAM_API_KEY: Optional[str] = os.getenv("DEEPGRAM_API_KEY")
 
     # -------------------------------------------------------------------
     # DATABASE
@@ -41,6 +42,7 @@ class Settings(BaseSettings):
     WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "base")
     MODEL_CACHE_DIR: str = os.getenv("MODEL_CACHE_DIR", "./models_cache")
     API_TIMEOUT_SECONDS: int = int(os.getenv("API_TIMEOUT_SECONDS", "60"))
+    USE_STREAMING_TRANSCRIPTION: bool = os.getenv("USE_STREAMING_TRANSCRIPTION", "true").lower() == "true"
 
     # -------------------------------------------------------------------
     # FRONTEND CORS CONFIG
