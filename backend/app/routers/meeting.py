@@ -633,6 +633,114 @@ async def meeting_websocket(
 
         logger.info(f"✅ {username} joined {room_id} as {participant.role.value}")
 
+        # Initialize Deepgram stream if streaming mode is enabled
+        orchestrator = get_orchestrator_service()
+        if orchestrator.use_streaming and orchestrator.deepgram_service:
+            logger.info(f"🎙️ Initializing Deepgram stream for {username} in {room_id}")
+            
+            # Define callback for transcript results
+            async def on_deepgram_transcript(result: dict):
+                """Handle transcript results from Deepgram streaming"""
+                try:
+                    text = result.get('text', '').strip()
+                    if not text:
+                        return
+                    
+                    is_final = result.get('is_final', True)
+                    confidence = result.get('confidence', 1.0)
+                    
+                    logger.info(f"📝 Deepgram transcript for {username}: '{text[:50]}...' (final: {is_final})")
+                    
+                    # For partial results, broadcast immediately without emotion analysis
+                    if not is_final:
+                        await room_manager.broadcast_to_room(room_id, {
+                            "type": "live_transcript",
+                            "user_id": user_id,
+                            "username": username,
+                            "text": text,
+                            "is_final": False,
+                            "confidence": confidence,
+                            "timestamp": datetime.utcnow().isoformat()
+                        })
+                        return
+                    
+                    # For final results, perform full processing with emotion analysis
+                    # Get audio array for emotion analysis (from last buffer if available)
+                    audio_array = None
+                    try:
+                        # Try to get recent audio for emotion analysis
+                        # In streaming mode, we don't buffer, so we'll use a simple neutral emotion for now
+                        # Future enhancement: buffer last N samples specifically for emotion analysis
+                        pass
+                    except:
+                        pass
+                    
+                    # Emotion analysis (only on final results)
+                    emotion = {"emotion": "neutral", "confidence": 0, "scores": {}}
+                    if audio_array is not None:
+                        try:
+                            from app.services.emotion_analysis import analyze_text_and_audio_combined
+                            emotion = await analyze_text_and_audio_combined(
+                                text=text, audio_array=audio_array,
+                                sample_rate=16000, text_weight=0.6, audio_weight=0.4
+                            )
+                        except Exception as e:
+                            logger.warning(f"⚠️ Emotion analysis failed: {e}")
+                    
+                    # Get emotion guidance
+                    guidance_engine = get_emotion_guidance_engine()
+                    guidance = guidance_engine.get_guidance(
+                        emotion["emotion"], text, emotion.get("confidence", 0),
+                        context={"username": username, "room_id": room_id, "speaker": user_id}
+                    )
+                    
+                    # Broadcast final transcript with emotion
+                    await room_manager.broadcast_transcript(
+                        room_id=room_id,
+                        user_id=user_id,
+                        username=username,
+                        text=text,
+                        emotion=emotion["emotion"],
+                        confidence=emotion.get("confidence", 0),
+                        emotion_guidance=guidance
+                    )
+                    
+                    # Store transcript
+                    store = get_transcript_store()
+                    entry_obj = await store.add_transcript_entry(
+                        meeting_id=room_id,
+                        speaker=user_id,
+                        text=text,
+                        confidence=confidence
+                    )
+                    
+                    if entry_obj:
+                        entry_obj.emotions = {
+                            "emotion": emotion["emotion"],
+                            "confidence": emotion.get("confidence", 0),
+                            "scores": emotion.get("scores", {})
+                        }
+                    
+                    logger.info(f"✅ Final transcript processed for {username}: '{text[:60]}'")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error processing Deepgram transcript: {e}", exc_info=True)
+            
+            # Start Deepgram stream for this session
+            success = await orchestrator.deepgram_service.start_stream(
+                session_id=room_id,
+                on_transcript=on_deepgram_transcript,
+                language="en",
+                model="nova-2",
+                smart_format=True,
+                interim_results=True
+            )
+            
+            if success:
+                logger.info(f"✅ Deepgram stream started for {username} in {room_id}")
+            else:
+                logger.warning(f"⚠️ Failed to start Deepgram stream for {username}, will use legacy mode")
+
         # Start recording if this is the first participant
         recorder = get_or_create_recorder(room_id)
         if not recorder.is_recording:
@@ -820,6 +928,15 @@ async def meeting_websocket(
     except Exception as e:
         logger.error(f"WebSocket error for {username} in {room_id}: {e}", exc_info=True)
     finally:
+        # Clean up Deepgram stream if streaming mode is enabled
+        try:
+            orchestrator = get_orchestrator_service()
+            if orchestrator.use_streaming and orchestrator.deepgram_service:
+                await orchestrator.deepgram_service.stop_stream(room_id)
+                logger.info(f"🔌 Stopped Deepgram stream for {username} in {room_id}")
+        except Exception as dg_err:
+            logger.debug(f"Error stopping Deepgram stream: {dg_err}")
+        
         # ✅ FIX: Only call leave_room once in finally block to avoid multiple calls
         try:
             await room_manager.leave_room(room_id, user_id)
@@ -830,7 +947,7 @@ async def meeting_websocket(
 # Audio processing helper -----------------------------------------------------
 
 async def process_audio(room_id, user_id, username, message, room_manager, websocket):
-    """✅ FIXED: Process audio chunk with proper format handling"""
+    """✅ FIXED: Process audio chunk with proper format handling for both streaming and legacy modes"""
     try:
         logger.info(f"🎵 process_audio called - room: {room_id}, user: {username} ({user_id})")
         
@@ -874,7 +991,12 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
         logger.info(f"🔍 DEBUG - Full result from orchestrator: {json.dumps(result, indent=2, default=str) if result else 'None'}")
         logger.info(f"🔍 DEBUG - Result keys: {list(result.keys()) if isinstance(result, dict) else 'not a dict'}")
 
-        # 🔹 Handle lightweight "listening" heartbeats
+        # 🔹 Handle streaming mode - transcripts come via callback
+        if result and result.get("type") == "streaming":
+            logger.debug(f"📡 Streaming mode - audio sent to Deepgram for {username}")
+            return
+
+        # 🔹 Handle lightweight "listening" heartbeats (legacy mode)
         if result and result.get("type") == "listening":
             logger.debug(f"⏳ Buffering audio for {username} in {room_id}: {result.get('buffered_duration', 0):.2f}s")
             await safe_send(websocket, result, "listening_status")
@@ -885,7 +1007,7 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
             logger.debug(f"⚠️ No result from orchestrator for user {username} in {room_id}")
             return
 
-        # ✅ FIX: Handle both single and multi-speaker responses
+        # ✅ FIX: Handle both single and multi-speaker responses (legacy mode)
         entries = []
         if result.get("type") == "multi_speaker_chunk":
             entries = result.get("entries", [])
