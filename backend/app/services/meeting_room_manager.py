@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Set, Any
 from dataclasses import dataclass, asdict
 from enum import Enum
+from starlette.websockets import WebSocketState
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,29 @@ class MeetingRoomManager:
         self._broadcast_task = None
         logger.info("MeetingRoomManager initialized")
     
+    async def safe_websocket_send(self, websocket: Any, data: Dict[str, Any], user_id: str = "unknown") -> bool:
+        """
+        Safely send data through WebSocket with proper state checking.
+        
+        Args:
+            websocket: WebSocket connection
+            data: Data to send
+            user_id: User ID for logging
+            
+        Returns:
+            True if send succeeded, False otherwise
+        """
+        try:
+            if websocket.client_state == WebSocketState.CONNECTED:
+                await websocket.send_json(data)
+                return True
+            else:
+                logger.debug(f"WebSocket not connected for {user_id} (state: {websocket.client_state}), skipping send")
+                return False
+        except Exception as e:
+            logger.debug(f"Failed to send to {user_id}: {e}")
+            return False
+    
     async def start_broadcasting(self):
         """Start the background broadcast task."""
         if self._broadcast_task is None:
@@ -138,7 +162,8 @@ class MeetingRoomManager:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Broadcast worker error: {e}")
+                # ✅ FIX: Log error but continue processing - don't crash the worker
+                logger.error(f"Broadcast worker error: {e}", exc_info=True)
     
     async def create_room(
         self,
@@ -262,18 +287,11 @@ class MeetingRoomManager:
             if participant:
                 participant.last_activity = datetime.utcnow()
 
-
             if participant:
                 logger.info(f"User {participant.username} left room {room_id}")
                 
-                # ✅ Close the participant's WebSocket connection
-                try:
-                    await participant.websocket.close()
-                    logger.info(f"Closed WebSocket for {participant.username} ({user_id})")
-                except Exception as e:
-                    logger.warning(f"Error closing WebSocket for {user_id}: {e}")
-
-                # ✅ Broadcast updated leave event
+                # ✅ Broadcast updated leave event BEFORE closing WebSocket
+                # This ensures other participants get notified properly
                 await self.broadcast_to_room(room_id, {
                     "type": "participant_left",
                     "user_id": user_id,
@@ -283,6 +301,19 @@ class MeetingRoomManager:
                     "participants": [p.to_dict() for p in room.participants.values()],
                     "room_status": room.status.value
                 })
+                
+                # ✅ FIX: Add small delay to allow in-flight broadcasts to complete
+                # This prevents premature closure during active transcription
+                await asyncio.sleep(0.1)
+                
+                # ✅ Close the participant's WebSocket connection
+                try:
+                    # Only close if still connected
+                    if participant.websocket.client_state == WebSocketState.CONNECTED:
+                        await participant.websocket.close()
+                        logger.info(f"Closed WebSocket for {participant.username} ({user_id})")
+                except Exception as e:
+                    logger.warning(f"Error closing WebSocket for {user_id}: {e}")
                 
                 # ✅ End room if empty
             if len(room.participants) == 0:
@@ -325,23 +356,34 @@ class MeetingRoomManager:
         if not room:
             return
         
+        # ✅ FIX: Use snapshot of participants to avoid "dictionary changed size during iteration"
+        participants_snapshot = list(room.participants.items())
+        
         # Send to all participants except excluded user
         dead_connections = []
+        successful_sends = []
         
-        for user_id, participant in room.participants.items():
+        for user_id, participant in participants_snapshot:
             if user_id == exclude_user_id:
                 continue
             
-            try:
-                await participant.websocket.send_json(message)
-                participant.last_activity = datetime.utcnow() 
-            except Exception as e:
-                logger.warning(f"Failed to send to {user_id}: {e}")
+            # ✅ FIX: Use safe_websocket_send with proper state checking
+            success = await self.safe_websocket_send(participant.websocket, message, user_id)
+            
+            if success:
+                participant.last_activity = datetime.utcnow()
+                successful_sends.append(user_id)
+            else:
                 dead_connections.append(user_id)
+        
+        # Log successful sends
+        if successful_sends:
+            logger.debug(f"✅ Message sent to {len(successful_sends)} participants in room {room_id}")
         
         # Clean up dead connections
         for user_id in dead_connections:
             await self.leave_room(room_id, user_id)
+        
         # 🔹 Auto-remove empty rooms to save memory
         if not room.participants:
             self.rooms.pop(room_id, None)
@@ -375,6 +417,7 @@ class MeetingRoomManager:
             logger.error(f"❌ Room {room_id} not found in rooms dict")
             return
         
+        # ✅ FIX: Ensure message format matches frontend expectations
         message = {
             "type": "live_transcript",
             "user_id": user_id,
@@ -382,11 +425,16 @@ class MeetingRoomManager:
             "text": text,
             "emotion": emotion,
             "confidence": confidence,
-            "emotion_guidance": emotion_guidance,
+            "emotion_guidance": emotion_guidance or {},
             "timestamp": datetime.utcnow().isoformat()
         }
         
-        logger.info(f"📤 Broadcasting message to {len(room.participants)} participants: {message}")
+        logger.info(f"📤 Broadcasting transcript to {len(room.participants)} participants: '{text[:50]}...'")
+        
+        # ✅ FIX: Validate room has participants before broadcasting
+        if not room.participants:
+            logger.warning(f"⚠️ No participants in room {room_id}, skipping broadcast")
+            return
         
         await self.broadcast_to_room(room_id, message)
         

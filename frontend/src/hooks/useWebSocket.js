@@ -86,7 +86,12 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                             break;
 
                         case 'live_transcript':
-                            console.log('📝 Adding transcript:', data.text);
+                            console.log('✅ Transcript received:', {
+                                username: data.username,
+                                text: data.text,
+                                emotion: data.emotion,
+                                timestamp: data.timestamp
+                            });
                             setTranscripts((prev) => [data, ...prev].slice(0, 100));
                             break;
 
