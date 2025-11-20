@@ -3,7 +3,7 @@
 import whisper
 import torch
 
-def load_whisper_model(model_name="small"):
+def load_whisper_model(model_name="base"):
     """
     Loads a specified Whisper model from the cache or downloads it if not present.
 

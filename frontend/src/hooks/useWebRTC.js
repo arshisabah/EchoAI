@@ -228,29 +228,16 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
       }
 
       if (type === "webrtc_answer") {
-  const from = from_id || data.from || user_id;
-  console.log(`📨 Received WebRTC answer from ${from}`);
-  const pc = peerConnectionsRef.current.get(from);
-  
-  if (pc && sdp) {
-    // ✅ CHECK THE SIGNALING STATE FIRST
-    console.log(`Current signaling state: ${pc.signalingState}`);
-    
-    if (pc.signalingState !== 'have-local-offer') {
-      console.warn(`⚠️ Cannot set remote answer in state: ${pc.signalingState}, skipping`);
-      return;
-    }
-    
-    try {
-      await pc.setRemoteDescription({ type: "answer", sdp });
-      console.log(`✅ Set remote description (answer) for peer ${from}`);
-    } catch (err) {
-      console.error(`❌ Failed to set remote description:`, err);
-    }
-  } else {
-    console.error(`❌ No peer connection found for ${from} or missing SDP`);
-  }
-}
+        const from = from_id || data.from || user_id;
+        console.log(`📨 Received WebRTC answer from ${from}`);
+        const pc = peerConnectionsRef.current.get(from);
+        if (pc && sdp) {
+          await pc.setRemoteDescription({ type: "answer", sdp });
+          console.log(`✅ Set remote description (answer) for peer ${from}`);
+        } else {
+          console.error(`❌ No peer connection found for ${from} or missing SDP`);
+        }
+      }
 
       if (type === "ice_candidate" && candidate) {
         const from = from_id || data.from || user_id;
