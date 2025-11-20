@@ -187,23 +187,27 @@ class OrchestratorService:
                 logger.debug(f"⏳ Buffering audio for session {session_id}: {duration_sec:.2f}s / 0.8s minimum")
                 return {"type": "listening", "buffered_duration": duration_sec}
             
-             # Check for silence boundary - wait for speaker to finish
-            # If no silence detected yet and duration < 4s, keep buffering
-            if duration_sec < 3.0:  # Increased from 2.0s to 4.0s
-                # Check if there's a 1.0s silence at the end (increased from 0.5s)
-                tail_samples = min(int(16000 * 1.0), len(combined))
+            # ✅ FIX: Force transcription after 2.5s OR when silence is detected
+            if duration_sec < 2.5:
+                tail_samples = min(int(16000 * 0.5), len(combined))  # Check last 0.5 seconds
                 tail = combined[-tail_samples:]
                 tail_energy = np.sqrt(np.mean(tail ** 2))
-                 # ✅ CHANGE debug to info for visibility
-                logger.info(f"🔊 Tail energy: {tail_energy:.6f} (threshold: 0.018) - Duration: {duration_sec:.2f}s")
-                logger.debug(f"🔊 Tail energy check for session {session_id}: {tail_energy:.6f} (threshold: 0.02)")
-                if tail_energy >= 0.012:  # Still speaking (increased from 0.015)
+                logger.info(f"🔊 Tail energy: {tail_energy:.6f} (threshold: 0.008) - Duration: {duration_sec:.2f}s")
+                
+                if tail_energy >= 0.008:  # Still speaking - reduced from 0.012 for better sensitivity
                     logger.debug(f"🗣️ Still speaking - buffering more audio for session {session_id}")
                     return {"type": "listening", "buffered_duration": duration_sec}
+                else:
+                    logger.info(f"🔇 Silence detected at {duration_sec:.2f}s - proceeding to transcription")
+            else:
+                # Force transcription after 2.5 seconds regardless of silence
+                logger.info(f"⏰ Buffer timeout at {duration_sec:.2f}s - forcing transcription")
 
             # Clear buffer after processing
             self.audio_buffers[session_id] = []
             audio_array = combined
+
+            logger.info(f"🎯 TRANSCRIPTION TRIGGERED - Duration: {duration_sec:.2f}s, Samples: {len(audio_array)}")
 
             # Whisper empty reshape prevention
             if len(audio_array) < 300:
