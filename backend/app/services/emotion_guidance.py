@@ -5,11 +5,89 @@ to detected emotions in conversations.
 """
 
 import logging
+import time
 from typing import Dict, Any, List
 from datetime import datetime
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+# Fallback guidance templates when OpenAI is unavailable
+FALLBACK_GUIDANCE_TEMPLATES = {
+    "angry": {
+        "severity": "high",
+        "suggestions": [
+            "Stay calm and acknowledge their frustration",
+            "Listen without interrupting",
+            "Avoid being defensive"
+        ]
+    },
+    "frustrated": {
+        "severity": "medium",
+        "suggestions": [
+            "Show empathy and help them find solutions",
+            "Ask what specific help they need",
+            "Offer concrete assistance"
+        ]
+    },
+    "sad": {
+        "severity": "medium",
+        "suggestions": [
+            "Show compassion and provide emotional support",
+            "Listen actively without trying to 'fix' immediately",
+            "Validate their feelings"
+        ]
+    },
+    "happy": {
+        "severity": "low",
+        "suggestions": [
+            "Share in their joy",
+            "Show genuine enthusiasm",
+            "Celebrate their success"
+        ]
+    },
+    "excited": {
+        "severity": "low",
+        "suggestions": [
+            "Match their enthusiasm",
+            "Ask engaging questions",
+            "Encourage their passion"
+        ]
+    },
+    "anxious": {
+        "severity": "medium",
+        "suggestions": [
+            "Provide reassurance",
+            "Help them feel secure",
+            "Offer concrete next steps"
+        ]
+    },
+    "confused": {
+        "severity": "low",
+        "suggestions": [
+            "Clarify and explain patiently",
+            "Use examples and analogies",
+            "Check understanding frequently"
+        ]
+    },
+    "confident": {
+        "severity": "low",
+        "suggestions": [
+            "Support their confidence",
+            "Ask thoughtful questions",
+            "Ensure all factors are considered"
+        ]
+    },
+    "neutral": {
+        "severity": "none",
+        "suggestions": [
+            "Maintain professional engagement",
+            "Stay focused on the topic",
+            "Be clear and direct"
+        ]
+    }
+}
 
 
 class EmotionGuidanceEngine:
@@ -20,7 +98,23 @@ class EmotionGuidanceEngine:
     
     def __init__(self):
         self.guidance_rules = self._load_guidance_rules()
-        logger.info("EmotionGuidanceEngine initialized")
+        self.use_fallback = self._check_openai_availability()
+        if self.use_fallback:
+            logger.warning("⚠️ OpenAI API not available, using fallback guidance templates")
+        else:
+            logger.info("✅ EmotionGuidanceEngine initialized with OpenAI support")
+    
+    def _check_openai_availability(self) -> bool:
+        """Check if OpenAI API is available."""
+        try:
+            from app.core.config import settings
+            if not settings.OPENAI_API_KEY:
+                return True  # Use fallback if no API key
+            # Could add additional checks here (e.g., test API call)
+            return False  # API key exists, don't use fallback by default
+        except Exception as e:
+            logger.warning(f"Error checking OpenAI availability: {e}")
+            return True  # Use fallback on error
     
     def _load_guidance_rules(self) -> Dict[str, Dict[str, Any]]:
         """Load emotion-specific guidance rules."""
@@ -267,6 +361,33 @@ class EmotionGuidanceEngine:
             }
         }
     
+    def _calculate_severity(self, emotion: str) -> str:
+        """Calculate severity level for an emotion."""
+        rules = self.guidance_rules.get(emotion, self.guidance_rules.get("neutral", {}))
+        return rules.get("severity", "none")
+    
+    def _extract_suggestions(self, rules: Dict[str, Any]) -> List[str]:
+        """Extract key suggestions from guidance rules."""
+        suggestions = []
+        if "primary_guidance" in rules:
+            suggestions.append(rules["primary_guidance"])
+        if "response_strategies" in rules:
+            suggestions.extend(rules["response_strategies"][:2])  # Top 2 strategies
+        return suggestions
+    
+    def _get_fallback_suggestions(self, emotion: str) -> Dict[str, Any]:
+        """Get fallback guidance when OpenAI is unavailable or rate-limited."""
+        emotion = emotion.lower()
+        template = FALLBACK_GUIDANCE_TEMPLATES.get(emotion, FALLBACK_GUIDANCE_TEMPLATES["neutral"])
+        
+        return {
+            "emotion": emotion,
+            "severity": template["severity"],
+            "suggestions": template["suggestions"],
+            "source": "fallback_template",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    
     def get_guidance(
         self,
         emotion: str,
@@ -287,41 +408,70 @@ class EmotionGuidanceEngine:
             Comprehensive guidance dictionary
         """
         emotion = emotion.lower()
-        rules = self.guidance_rules.get(emotion, self.guidance_rules["neutral"])
         context = context or {}
         
-        # Build guidance response
-        guidance = {
-            "emotion": emotion,
-            "confidence": confidence,
-            "severity": rules["severity"],
-            "visual": {
-                "color": rules["color"],
-                "icon": rules["icon"]
-            },
-            "primary_guidance": rules["primary_guidance"],
-            "response_strategies": rules["response_strategies"],
-            "recommended_phrases": rules["phrases_to_use"],
-            "avoid_phrases": rules["phrases_to_avoid"],
-            "tone_guidance": rules["tone_guidance"],
-            "body_language": rules["body_language"],
-            "timestamp": datetime.utcnow().isoformat()
-        }
+        # If fallback mode is enabled or OpenAI fails, use fallback templates
+        if self.use_fallback:
+            return self._get_fallback_suggestions(emotion)
         
-        # Add contextual enhancements
-        if confidence < 0.5:
-            guidance["note"] = "Low confidence - use general supportive communication"
+        # Try to get guidance with retry logic
+        from app.core.config import settings
+        max_retries = settings.OPENAI_MAX_RETRIES
+        retry_delay = settings.OPENAI_RETRY_DELAY
         
-        if rules["severity"] == "high":
-            guidance["alert"] = True
-            guidance["alert_message"] = f"⚠️ High emotion detected. Proceed with extra care and empathy."
+        for attempt in range(max_retries + 1):
+            try:
+                rules = self.guidance_rules.get(emotion, self.guidance_rules["neutral"])
+                
+                # Build guidance response
+                guidance = {
+                    "emotion": emotion,
+                    "confidence": confidence,
+                    "severity": rules["severity"],
+                    "visual": {
+                        "color": rules["color"],
+                        "icon": rules["icon"]
+                    },
+                    "primary_guidance": rules["primary_guidance"],
+                    "response_strategies": rules["response_strategies"],
+                    "recommended_phrases": rules["phrases_to_use"],
+                    "avoid_phrases": rules["phrases_to_avoid"],
+                    "tone_guidance": rules["tone_guidance"],
+                    "body_language": rules["body_language"],
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                
+                # Add contextual enhancements
+                if confidence < 0.5:
+                    guidance["note"] = "Low confidence - use general supportive communication"
+                
+                if rules["severity"] == "high":
+                    guidance["alert"] = True
+                    guidance["alert_message"] = f"⚠️ High emotion detected. Proceed with extra care and empathy."
+                
+                # Add AI-generated specific response
+                guidance["ai_suggested_response"] = self._generate_ai_response(
+                    emotion, text, context
+                )
+                
+                return guidance
+                
+            except Exception as e:
+                logger.warning(f"Attempt {attempt + 1}/{max_retries + 1} failed: {e}")
+                
+                # On rate limit errors (429) or last attempt, use fallback
+                if "429" in str(e) or attempt >= max_retries:
+                    logger.warning(f"Using fallback guidance for {emotion}")
+                    return self._get_fallback_suggestions(emotion)
+                
+                # Exponential backoff
+                if attempt < max_retries:
+                    delay = retry_delay * (2 ** attempt)
+                    logger.info(f"Retrying in {delay}s...")
+                    time.sleep(delay)
         
-        # Add AI-generated specific response
-        guidance["ai_suggested_response"] = self._generate_ai_response(
-            emotion, text, context
-        )
-        
-        return guidance
+        # Final fallback
+        return self._get_fallback_suggestions(emotion)
     
     def _generate_ai_response(
         self,

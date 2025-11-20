@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     USE_STREAMING_TRANSCRIPTION: bool = os.getenv("USE_STREAMING_TRANSCRIPTION", "true").lower() == "true"
 
     # -------------------------------------------------------------------
+    # OPENAI RATE LIMITING
+    # -------------------------------------------------------------------
+    OPENAI_MAX_RETRIES: int = int(os.getenv("OPENAI_MAX_RETRIES", "2"))
+    OPENAI_RETRY_DELAY: float = float(os.getenv("OPENAI_RETRY_DELAY", "1.0"))
+    OPENAI_REQUEST_TIMEOUT: float = float(os.getenv("OPENAI_REQUEST_TIMEOUT", "2.0"))
+
+    # -------------------------------------------------------------------
     # FRONTEND CORS CONFIG
     # -------------------------------------------------------------------
     # Format in .env: ALLOWED_ORIGINS=["*"] or ["http://localhost:5173"]

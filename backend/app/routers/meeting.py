@@ -700,8 +700,7 @@ async def meeting_websocket(
                     else:
                         logger.info(f"⚠️ No audio for emotion analysis (buffer has {len(_room_audio_buffers.get(current_stream_id, []))} chunks)")
                     
-                    # Get emotion guidance
-                    g# Get emotion guidance (with timeout to prevent blocking broadcasts)
+                    # Get emotion guidance (with timeout to prevent blocking broadcasts)
                     guidance = {}
                     try:
                         guidance_engine = get_emotion_guidance_engine()
