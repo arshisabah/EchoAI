@@ -177,7 +177,6 @@ class OrchestratorService:
     # LEGACY MODE (BUFFERED WHISPER)
     # ==========================================================
     async def _process_audio_legacy(self, audio_bytes: bytes, session_id: str, participant_id=None):
-    async def _process_audio_legacy(self, audio_bytes: bytes, session_id: str, participant_id=None):
         """
         Legacy buffered mode using Whisper transcription.
         """
