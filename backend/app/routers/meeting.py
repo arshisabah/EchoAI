@@ -524,6 +524,35 @@ def _generate_srt_transcript(entries) -> str:
     return "\n".join(lines)
 
 
+# Test endpoint for WebSocket broadcast verification
+@router.post("/rooms/{room_id}/test-broadcast")
+async def test_broadcast(room_id: str):
+    """
+    Test endpoint to verify WebSocket broadcast is working.
+    Sends a test transcript message to all participants in the room.
+    """
+    try:
+        room_manager = get_meeting_room_manager()
+        
+        test_message = {
+            "type": "live_transcript",
+            "user_id": "test_user",
+            "username": "Test User",
+            "text": "This is a test transcript to verify WebSocket is working",
+            "emotion": "neutral",
+            "confidence": 1.0,
+            "emotion_guidance": {},
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        await room_manager.broadcast_to_room(room_id, test_message)
+        
+        return {"status": "Test broadcast sent", "room_id": room_id, "message": test_message}
+    except Exception as e:
+        logger.error(f"❌ Test broadcast failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Test broadcast failed: {str(e)}")
+
+
 # WebSocket for Real-Time Collaboration ---------------------------------------
 
 @router.websocket("/rooms/{room_id}/ws")
@@ -826,6 +855,11 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
             participant_id=user_id
         )
         logger.info(f"✅ Orchestrator returned result for room {room_id}: {type(result).__name__ if result else 'None'}")
+        
+        # 🔍 DEBUG - Add detailed logging of orchestrator result
+        import json
+        logger.info(f"🔍 DEBUG - Full result from orchestrator: {json.dumps(result, indent=2, default=str) if result else 'None'}")
+        logger.info(f"🔍 DEBUG - Result keys: {list(result.keys()) if isinstance(result, dict) else 'not a dict'}")
 
         # 🔹 Handle lightweight "listening" heartbeats
         if result and result.get("type") == "listening":
@@ -845,12 +879,17 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
         entries = []
         if result.get("type") == "multi_speaker_chunk":
             entries = result.get("entries", [])
+            logger.info(f"📋 Multi-speaker result with {len(entries)} entries")
         elif isinstance(result, dict) and result.get("text"):
-            # Single entry
+            # Single entry - this is what we expect most of the time
             entries = [result]
+            logger.info(f"📋 Single entry result: '{result.get('text', '')[:50]}...'")
+        else:
+            logger.warning(f"⚠️ Unexpected result structure: {result}")
 
         if not entries:
-            logger.debug(f"No valid transcription entries for {username} in {room_id}")
+            logger.warning(f"❌ No valid entries extracted from orchestrator result for {username} in {room_id}")
+            logger.warning(f"   Result was: {result}")
             return
 
         # Iterate entries (may contain different speaker ids)
@@ -870,6 +909,13 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
 
             # Broadcast transcript + emotion -> uses manager's broadcast_transcript
             logger.info(f"📢 Broadcasting transcript from {username} in {room_id}: '{text[:50]}...'")
+            logger.info(f"🔊 ABOUT TO BROADCAST:")
+            logger.info(f"   - room_id: {room_id}")
+            logger.info(f"   - user_id: {user_id}")
+            logger.info(f"   - username: {username}")
+            logger.info(f"   - text: '{text[:100]}...'")
+            logger.info(f"   - emotion: {emotion}")
+            
             await room_manager.broadcast_transcript(
                 room_id=room_id,
                 user_id=user_id,
@@ -879,6 +925,8 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
                 confidence=confidence,
                 emotion_guidance=guidance
             )
+            
+            logger.info(f"✅ BROADCAST COMPLETED for {username}")
 
             # Store transcript
             store = get_transcript_store()

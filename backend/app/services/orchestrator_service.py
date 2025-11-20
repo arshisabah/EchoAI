@@ -290,13 +290,17 @@ class OrchestratorService:
 
             # ✅ FIX: Return correct format expected by meeting.py
             if len(processed) == 1:
-                logger.info(f"✅ Returning single entry for session {session_id}: speaker={processed[0]['speaker']}")
+                logger.info(f"✅ RETURNING SINGLE ENTRY:")
+                logger.info(f"   - speaker: {processed[0].get('speaker')}")
+                logger.info(f"   - text: {processed[0].get('text', '')[:100]}...")
+                logger.info(f"   - has text field: {'text' in processed[0]}")
+                logger.info(f"   - all keys: {list(processed[0].keys())}")
                 return processed[0]
             elif len(processed) > 1:
-                logger.info(f"✅ Returning {len(processed)} multi-speaker entries for session {session_id}")
+                logger.info(f"✅ RETURNING MULTI-SPEAKER with {len(processed)} entries")
                 return {"type": "multi_speaker_chunk", "entries": processed}
             else:
-                logger.warning(f"⚠️ No valid entries processed for session {session_id}")
+                logger.warning(f"⚠️ No valid entries processed for session {session_id} - RETURNING NONE")
                 return None
 
         except Exception as e:
