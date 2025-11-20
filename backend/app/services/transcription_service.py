@@ -88,14 +88,14 @@ class TranscriptionService:
         energy = np.sqrt(np.mean(audio_array ** 2))
         
         # Energy threshold for voice activity
-        energy_threshold = 0.01
+        energy_threshold = 0.02
         
         # Zero crossing rate
         zero_crossings = np.sum(np.abs(np.diff(np.sign(audio_array)))) / (2 * len(audio_array))
         
         # Zero crossing threshold (voice typically has moderate ZCR)
-        zcr_min = 0.01
-        zcr_max = 0.5
+        zcr_min = 0.02
+        zcr_max = 0.4
         
         # Voice activity if energy is sufficient and ZCR is in voice range
         has_energy = energy > energy_threshold
@@ -120,7 +120,7 @@ class TranscriptionService:
         tail_energy = np.sqrt(np.mean(tail ** 2))
         
         # Silence threshold
-        silence_energy_threshold = 0.005
+        silence_energy_threshold = 0.01
         
         return tail_energy < silence_energy_threshold
 
@@ -139,9 +139,10 @@ class TranscriptionService:
             logger.debug(f"Converting stereo to mono for session {session_id}")
             audio_array = np.mean(audio_array, axis=1)
 
-        # Normalize amplitude to [-1, 1]
-        audio_array = audio_array / (np.max(np.abs(audio_array)) + 1e-6)
-
+        # Better normalization - preserve dynamics
+        max_amplitude = np.max(np.abs(audio_array))
+        if max_amplitude > 0.1:  # Only normalize if needed
+            audio_array = audio_array / max_amplitude * 0.85  # Leave 15% headroom
         # Improved Voice Activity Detection
         if not self.detect_voice_activity(audio_array, sample_rate):
             logger.debug(f"No voice activity detected for session {session_id}; skipping chunk.")
@@ -190,12 +191,14 @@ class TranscriptionService:
 
             logger.debug(f"📤 Sending {audio_io.tell()} bytes to OpenAI API")
 
-            # Call OpenAI API
+            # Call OpenAI API with improved parameters for accuracy
             response = await client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_io,
                 response_format="verbose_json",
-                language="en"
+                language="en",
+                prompt="This is a professional meeting conversation with clear speech.",
+                temperature=0.0  # Most accurate (0.0 = deterministic, 1.0 = creative)
             )
 
             text = response.text.strip()
@@ -278,7 +281,14 @@ class TranscriptionService:
             result = self.model.transcribe(
                 audio_array,
                 fp16=(self.device == "cuda"),
-                language="en"
+                language="en",
+                task="transcribe",
+                temperature=0.0,  # Most accurate
+                compression_ratio_threshold=2.4,
+                logprob_threshold=-1.0,
+                no_speech_threshold=0.6,
+                condition_on_previous_text=False,
+                initial_prompt="This is a clear conversation."
             )
             return result
 

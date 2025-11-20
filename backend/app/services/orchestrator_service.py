@@ -148,13 +148,21 @@ class OrchestratorService:
                 return None
 
             # Skip silence
-            if np.abs(audio_array).mean() < 0.004:
+            if np.abs(audio_array).mean() < 0.01:
                 logger.debug(f"🔇 Skipping silence for session {session_id} (mean amplitude: {np.abs(audio_array).mean():.6f})")
                 return None
 
-            # Normalize
-            audio_array = audio_array / (np.max(np.abs(audio_array)) + 1e-6)
-
+            # Better normalization - preserve dynamics
+            max_amplitude = np.max(np.abs(audio_array))
+            if max_amplitude > 0.1:  # Only normalize if needed
+                audio_array = audio_array / max_amplitude * 0.9  # Leave 10% headroom
+            # Apply advanced preprocessing for better accuracy
+            try:
+                from app.services.audio_preprocessing import preprocess_audio_for_transcription
+                audio_array = preprocess_audio_for_transcription(audio_array, sample_rate=16000)
+                logger.debug(f"✅ Applied audio preprocessing for session {session_id}")
+            except Exception as preprocess_err:
+                logger.warning(f"⚠️ Audio preprocessing skipped: {preprocess_err}")
             # ---------- STEP 2: BUFFER ----------
             # Buffer automatically trims to 3 seconds via AutoTrimmingAudioList
             buf = self.audio_buffers.setdefault(session_id, [])
@@ -171,20 +179,20 @@ class OrchestratorService:
 
             # Wait for at least 0.8 seconds OR detect silence boundary (0.5s silence at end)
             # Reduced from 1.5s to 0.8s for better real-time responsiveness
-            if duration_sec < 0.8:
+            if duration_sec < 2.0:
                 logger.debug(f"⏳ Buffering audio for session {session_id}: {duration_sec:.2f}s / 0.8s minimum")
                 return {"type": "listening", "buffered_duration": duration_sec}
             
-            # Check for silence boundary - wait for speaker to finish
-            # If no silence detected yet and duration < 2s, keep buffering
-            if duration_sec < 2.0:
-                # Check if there's a 0.5s silence at the end (reduced from 0.8s)
-                tail_samples = min(int(16000 * 0.5), len(combined))
+             # Check for silence boundary - wait for speaker to finish
+            # If no silence detected yet and duration < 4s, keep buffering
+            if duration_sec < 4.0:  # Increased from 2.0s to 4.0s
+                # Check if there's a 1.0s silence at the end (increased from 0.5s)
+                tail_samples = min(int(16000 * 1.0), len(combined))
                 tail = combined[-tail_samples:]
                 tail_energy = np.sqrt(np.mean(tail ** 2))
                 
-                logger.debug(f"🔊 Tail energy check for session {session_id}: {tail_energy:.6f} (threshold: 0.015)")
-                if tail_energy >= 0.015:  # Still speaking (increased from 0.008 to be more permissive)
+                logger.debug(f"🔊 Tail energy check for session {session_id}: {tail_energy:.6f} (threshold: 0.02)")
+                if tail_energy >= 0.02:  # Still speaking (increased from 0.015)
                     logger.debug(f"🗣️ Still speaking - buffering more audio for session {session_id}")
                     return {"type": "listening", "buffered_duration": duration_sec}
 
