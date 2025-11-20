@@ -62,6 +62,13 @@ Thumbs.db
 *.swp
 
 # -------------------------------
+# Auto-generated startup scripts
+# -------------------------------
+start_backend.sh
+start_frontend.sh
+start_all.sh
+
+# -------------------------------
 # Reports / Generated Files
 # -------------------------------
 *.pdf
