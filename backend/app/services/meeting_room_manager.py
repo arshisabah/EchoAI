@@ -419,7 +419,7 @@ class MeetingRoomManager:
         message_id = f"transcript_{user_id}_{datetime.utcnow().timestamp():.0f}"
         # ✅ FIX: Ensure message format matches frontend expectations
         message = {
-            "type": "final_transcript",
+            "type": "live_transcript",
             "user_id": user_id,
             "username": username,
             "text": text,
