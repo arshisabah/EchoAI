@@ -8,9 +8,9 @@ Deepgram's live API with built-in VAD and word-by-word results.
 
 import asyncio
 import logging
-import base64
 from typing import Optional, Dict, Callable, Any
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,8 @@ class DeepgramStreamingService:
         self.client = None
         self.connections: Dict[str, Any] = {}  # session_id -> connection
         self.callbacks: Dict[str, Callable] = {}  # session_id -> callback
+        self.loops: Dict[str, Any] = {}  # session_id -> event loop
+        self.executor = ThreadPoolExecutor(max_workers=4)
         
         logger.info("✅ DeepgramStreamingService initialized")
     
@@ -79,6 +81,12 @@ class DeepgramStreamingService:
             if session_id in self.connections:
                 logger.warning(f"⚠️ Stream already exists for session {session_id}")
                 return True
+            
+            # Store the event loop for this session
+            try:
+                self.loops[session_id] = asyncio.get_running_loop()
+            except RuntimeError:
+                self.loops[session_id] = asyncio.get_event_loop()
             
             # Initialize Deepgram client
             if not self.client:
@@ -124,11 +132,23 @@ class DeepgramStreamingService:
                                     'timestamp': datetime.utcnow().isoformat(),
                                 }
                                 
-                                # Call the callback
-                                callback = self.callbacks.get(session_id)
-                                if callback:
-                                    asyncio.create_task(self._safe_callback(callback, transcript_result))
+                                # Log the transcript
+                                logger.info(f"📝 {'✅ Final' if is_final else '⏳ Partial'} transcript: '{transcript}'")
                                 
+                                # Call the callback safely using the stored event loop
+                                callback = self.callbacks.get(session_id)
+                                loop = self.loops.get(session_id)
+                                
+                                if callback and loop:
+                                    try:
+                                        # Schedule callback in the stored event loop
+                                        asyncio.run_coroutine_threadsafe(
+                                            self._safe_callback(callback, transcript_result),
+                                            loop
+                                        )
+                                    except Exception as e:
+                                        logger.error(f"❌ Error scheduling callback: {e}")
+                            
                 except Exception as e:
                     logger.error(f"❌ Error processing transcript message for {session_id}: {e}", exc_info=True)
             
@@ -147,6 +167,8 @@ class DeepgramStreamingService:
                     del self.connections[session_id]
                 if session_id in self.callbacks:
                     del self.callbacks[session_id]
+                if session_id in self.loops:
+                    del self.loops[session_id]
             
             # Register event handlers
             dg_connection.on(LiveTranscriptionEvents.Transcript, on_message)
@@ -230,6 +252,8 @@ class DeepgramStreamingService:
                 del self.connections[session_id]
             if session_id in self.callbacks:
                 del self.callbacks[session_id]
+            if session_id in self.loops:
+                del self.loops[session_id]
             
             logger.info(f"✅ Stopped Deepgram stream for session {session_id}")
             return True
@@ -244,7 +268,12 @@ class DeepgramStreamingService:
             if asyncio.iscoroutinefunction(callback):
                 await callback(result)
             else:
-                callback(result)
+                # Wrap synchronous callback
+                await asyncio.get_event_loop().run_in_executor(
+                    self.executor,
+                    callback,
+                    result
+                )
         except Exception as e:
             logger.error(f"❌ Error in transcript callback: {e}", exc_info=True)
     
@@ -253,6 +282,10 @@ class DeepgramStreamingService:
         session_ids = list(self.connections.keys())
         for session_id in session_ids:
             await self.stop_stream(session_id)
+        
+        # Shutdown executor
+        self.executor.shutdown(wait=False)
+        
         logger.info("✅ All Deepgram connections cleaned up")
 
 
