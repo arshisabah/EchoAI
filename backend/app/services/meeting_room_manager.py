@@ -416,16 +416,19 @@ class MeetingRoomManager:
         if not room:
             logger.error(f"❌ Room {room_id} not found in rooms dict")
             return
-        
+        message_id = f"transcript_{user_id}_{datetime.utcnow().timestamp():.0f}"
         # ✅ FIX: Ensure message format matches frontend expectations
         message = {
-            "type": "live_transcript",
+            "type": "final_transcript",
             "user_id": user_id,
             "username": username,
             "text": text,
             "emotion": emotion,
             "confidence": confidence,
-            "emotion_guidance": emotion_guidance or {},
+            "emotion_guidance": emotion_guidance ,
+            "is_final": True,
+            "partial": False,
+            "message_id": f"{user_id}_{room_id}_final",
             "timestamp": datetime.utcnow().isoformat()
         }
         

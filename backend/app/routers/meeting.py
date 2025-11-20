@@ -35,6 +35,7 @@ from app.modules.audio_recorder import get_or_create_recorder, get_recorder, del
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/meeting", tags=["Multi-User Meetings"])
 
+_room_audio_buffers = {}  # In-memory buffer for audio chunks per room
 
 # Request Models
 class CreateRoomRequest(BaseModel):
@@ -634,11 +635,23 @@ async def meeting_websocket(
         logger.info(f"✅ {username} joined {room_id} as {participant.role.value}")
 
         # Initialize Deepgram stream if streaming mode is enabled
+        # Initialize Deepgram stream if streaming mode is enabled
         orchestrator = get_orchestrator_service()
         if orchestrator.use_streaming and orchestrator.deepgram_service:
-            logger.info(f"🎙️ Initializing Deepgram stream for {username} in {room_id}")
+            stream_id = f"{room_id}_{user_id}"
+            logger.info(f"🎙️ Initializing Deepgram stream for {username} (stream: {stream_id})")
             
-            # Define callback for transcript results
+            # Initialize audio buffer for this user's stream
+            if stream_id not in _room_audio_buffers:
+                _room_audio_buffers[stream_id] = []
+            
+            # Define callback for transcript results FOR THIS USER
+            # We need to capture these variables in the closure
+            current_user_id = user_id
+            current_username = username
+            current_room_id = room_id
+            current_stream_id = stream_id
+            
             async def on_deepgram_transcript(result: dict):
                 """Handle transcript results from Deepgram streaming"""
                 try:
@@ -649,56 +662,56 @@ async def meeting_websocket(
                     is_final = result.get('is_final', True)
                     confidence = result.get('confidence', 1.0)
                     
-                    logger.info(f"📝 Deepgram transcript for {username}: '{text[:50]}...' (final: {is_final})")
+                    # Use username directly (each user has their own stream)
+                    display_name = current_username
                     
-                    # For partial results, broadcast immediately without emotion analysis
+                    logger.info(f"📝 Deepgram transcript for {display_name}: '{text[:50]}...' (final: {is_final})")
+                    
+                    # For partial results, skip broadcasting (only show final transcripts)
                     if not is_final:
-                        await room_manager.broadcast_to_room(room_id, {
-                            "type": "live_transcript",
-                            "user_id": user_id,
-                            "username": username,
-                            "text": text,
-                            "is_final": False,
-                            "confidence": confidence,
-                            "timestamp": datetime.utcnow().isoformat()
-                        })
+                        logger.debug(f"⏭️ Skipping partial transcript for {display_name}: '{text[:30]}'")
                         return
                     
                     # For final results, perform full processing with emotion analysis
-                    # Get audio array for emotion analysis (from last buffer if available)
+                    # Get audio from buffer (use stream_id from parent scope)
                     audio_array = None
-                    try:
-                        # Try to get recent audio for emotion analysis
-                        # In streaming mode, we don't buffer, so we'll use a simple neutral emotion for now
-                        # Future enhancement: buffer last N samples specifically for emotion analysis
-                        pass
-                    except:
-                        pass
+                    if current_stream_id in _room_audio_buffers and len(_room_audio_buffers[current_stream_id]) > 0:
+                        try:
+                            import numpy as np
+                            # Use last 15 chunks (about 1-2 seconds)
+                            recent_chunks = _room_audio_buffers[current_stream_id][-15:]
+                            audio_array = np.concatenate(recent_chunks)
+                            logger.info(f"🎤 Using {len(audio_array)} samples for emotion analysis")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Failed to get audio buffer: {e}")
                     
                     # Emotion analysis (only on final results)
                     emotion = {"emotion": "neutral", "confidence": 0, "scores": {}}
-                    if audio_array is not None:
+                    if audio_array is not None and len(audio_array) >= 1600:  # At least 0.1 seconds
                         try:
                             from app.services.emotion_analysis import analyze_text_and_audio_combined
                             emotion = await analyze_text_and_audio_combined(
                                 text=text, audio_array=audio_array,
                                 sample_rate=16000, text_weight=0.6, audio_weight=0.4
                             )
+                            logger.info(f"🎭 Emotion detected: {emotion['emotion']} (confidence: {emotion.get('confidence', 0):.2f})")
                         except Exception as e:
                             logger.warning(f"⚠️ Emotion analysis failed: {e}")
+                    else:
+                        logger.info(f"⚠️ No audio for emotion analysis (buffer has {len(_room_audio_buffers.get(current_stream_id, []))} chunks)")
                     
                     # Get emotion guidance
                     guidance_engine = get_emotion_guidance_engine()
                     guidance = guidance_engine.get_guidance(
                         emotion["emotion"], text, emotion.get("confidence", 0),
-                        context={"username": username, "room_id": room_id, "speaker": user_id}
+                        context={"username": current_username, "room_id": current_room_id, "speaker": current_user_id}
                     )
                     
                     # Broadcast final transcript with emotion
                     await room_manager.broadcast_transcript(
-                        room_id=room_id,
-                        user_id=user_id,
-                        username=username,
+                        room_id=current_room_id,
+                        user_id=current_user_id,
+                        username=display_name,
                         text=text,
                         emotion=emotion["emotion"],
                         confidence=emotion.get("confidence", 0),
@@ -708,8 +721,8 @@ async def meeting_websocket(
                     # Store transcript
                     store = get_transcript_store()
                     entry_obj = await store.add_transcript_entry(
-                        meeting_id=room_id,
-                        speaker=user_id,
+                        meeting_id=current_room_id,
+                        speaker=current_user_id,
                         text=text,
                         confidence=confidence
                     )
@@ -721,26 +734,27 @@ async def meeting_websocket(
                             "scores": emotion.get("scores", {})
                         }
                     
-                    logger.info(f"✅ Final transcript processed for {username}: '{text[:60]}'")
+                    logger.info(f"✅ Final transcript processed for {display_name}: '{text[:60]}' | Emotion: {emotion['emotion']}")
                     
                 except Exception as e:
                     logger.error(f"❌ Error processing Deepgram transcript: {e}", exc_info=True)
             
-            # Start Deepgram stream for this session
+            # Start Deepgram stream for THIS USER (unique stream per participant)
             success = await orchestrator.deepgram_service.start_stream(
-                session_id=room_id,
+                session_id=stream_id,
                 on_transcript=on_deepgram_transcript,
                 language="en",
                 model="nova-2",
                 smart_format=True,
-                interim_results=True
+                interim_results=True,
+                diarize=False  # We're using user_id instead
             )
             
             if success:
-                logger.info(f"✅ Deepgram stream started for {username} in {room_id}")
+                logger.info(f"✅ Deepgram stream started for {username} (stream: {stream_id})")
             else:
                 logger.warning(f"⚠️ Failed to start Deepgram stream for {username}, will use legacy mode")
-
+        
         # Start recording if this is the first participant
         recorder = get_or_create_recorder(room_id)
         if not recorder.is_recording:
@@ -932,7 +946,8 @@ async def meeting_websocket(
         try:
             orchestrator = get_orchestrator_service()
             if orchestrator.use_streaming and orchestrator.deepgram_service:
-                await orchestrator.deepgram_service.stop_stream(room_id)
+                stream_id = f"{room_id}_{user_id}"
+                await orchestrator.deepgram_service.stop_stream(stream_id)
                 logger.info(f"🔌 Stopped Deepgram stream for {username} in {room_id}")
         except Exception as dg_err:
             logger.debug(f"Error stopping Deepgram stream: {dg_err}")
@@ -964,6 +979,30 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
         except Exception as decode_err:
             logger.error(f"❌ Base64 decode failed for {username}: {decode_err}")
             return
+        
+        # ✅ NEW: Buffer audio for emotion analysis in streaming mode
+        try:
+            audio_array_for_buffer, _ = bytes_to_numpy(audio_bytes, sample_rate=16000)
+            
+            # Check if streaming mode is active
+            orchestrator = get_orchestrator_service()
+            if orchestrator.use_streaming and orchestrator.deepgram_service:
+                stream_id = f"{room_id}_{user_id}"
+                # Initialize buffer if needed
+                if stream_id not in _room_audio_buffers:
+                    _room_audio_buffers[stream_id] = []
+                
+                # Add to buffer
+                _room_audio_buffers[stream_id].append(audio_array_for_buffer)
+                
+                # Keep only last 20 chunks (about 2-3 seconds)
+                if len(_room_audio_buffers[stream_id]) > 20:
+                    _room_audio_buffers[stream_id].pop(0)
+                
+                logger.debug(f"🎤 Buffered audio for emotion: {len(_room_audio_buffers[stream_id])} chunks")
+                
+        except Exception as buffer_err:
+            logger.warning(f"⚠️ Audio buffering failed: {buffer_err}")
 
         # 2.5️⃣ Add audio to recorder for meeting recording
         try:
@@ -977,11 +1016,12 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
             logger.warning(f"⚠️ Failed to add audio to recorder for room {room_id}: {rec_err}")
 
         # 3️⃣ Run unified AI pipeline via orchestrator
+        stream_id = f"{room_id}_{user_id}"
         logger.info(f"🔧 Calling orchestrator for room {room_id}, user {username} with {len(audio_bytes)} bytes")
         orchestrator = get_orchestrator_service()
         result = await orchestrator.process_audio_chunk(
             audio_bytes=audio_bytes,
-            session_id=room_id,
+            session_id=stream_id,
             participant_id=user_id
         )
         logger.info(f"✅ Orchestrator returned result for room {room_id}: {type(result).__name__ if result else 'None'}")

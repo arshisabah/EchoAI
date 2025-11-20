@@ -62,6 +62,7 @@ class DeepgramStreamingService:
         model: str = "nova-2",
         smart_format: bool = True,
         interim_results: bool = True,
+        diarize: bool = True,
     ) -> bool:
         """
         Start a streaming connection for a session.
@@ -97,6 +98,11 @@ class DeepgramStreamingService:
             
             # Store callback
             self.callbacks[session_id] = on_transcript
+
+            def on_open(self_inner,open_msg ,  **kwargs):
+                """Handle connection open"""
+                logger.info(f"🔌 Deepgram connection opened for {session_id}: {open_msg}")
+                logger.info(f" open msg: {open_msg}")
             
             # Set up event handlers
             def on_message(self_inner, result, **kwargs):
@@ -111,6 +117,11 @@ class DeepgramStreamingService:
                             if transcript.strip():
                                 is_final = result.is_final if hasattr(result, 'is_final') else True
                                 confidence = alternative.confidence if hasattr(alternative, 'confidence') else 1.0
+
+                                #extract speakker label from deepgram
+                                speaker = None
+                                if hasattr(channel, 'speaker'):
+                                    speaker = channel.speaker
                                 
                                 # Extract word-level timestamps if available
                                 words = []
@@ -128,6 +139,7 @@ class DeepgramStreamingService:
                                     'is_final': is_final,
                                     'confidence': confidence,
                                     'words': words,
+                                    'speaker': speaker,
                                     'session_id': session_id,
                                     'timestamp': datetime.utcnow().isoformat(),
                                 }
@@ -171,11 +183,12 @@ class DeepgramStreamingService:
                     del self.loops[session_id]
             
             # Register event handlers
+            dg_connection.on(LiveTranscriptionEvents.Open, on_open) 
             dg_connection.on(LiveTranscriptionEvents.Transcript, on_message)
             dg_connection.on(LiveTranscriptionEvents.Metadata, on_metadata)
             dg_connection.on(LiveTranscriptionEvents.Error, on_error)
             dg_connection.on(LiveTranscriptionEvents.Close, on_close)
-            
+            logger.info(f" Registerd evebts handle : open, transcript, metadata, error, close for {session_id}")
             # Configure options
             options = LiveOptions(
                 model=model,
@@ -185,6 +198,7 @@ class DeepgramStreamingService:
                 encoding="linear16",
                 sample_rate=16000,
                 channels=1,
+                diarize=diarize,
                 vad_events=True,  # Enable Voice Activity Detection events
             )
             
