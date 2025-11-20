@@ -74,6 +74,8 @@ class SessionData:
 class OrchestratorService:
 
     def __init__(self):
+        from app.core.config import settings
+        
         self.transcription_service = get_transcription_service()
         self.summary_service = get_summary_service()
         self.speaker_service = get_speaker_service()
@@ -81,6 +83,25 @@ class OrchestratorService:
 
         self.active_sessions: Dict[str, SessionData] = {}
         self.audio_buffers: AudioBufferDict = AudioBufferDict()
+        
+        # Initialize streaming transcription if enabled
+        self.use_streaming = settings.USE_STREAMING_TRANSCRIPTION and settings.DEEPGRAM_API_KEY
+        self.deepgram_service = None
+        
+        if self.use_streaming:
+            try:
+                from app.services.deepgram_transcription import get_deepgram_service
+                self.deepgram_service = get_deepgram_service(settings.DEEPGRAM_API_KEY)
+                if self.deepgram_service:
+                    logger.info("✅ Deepgram streaming transcription enabled")
+                else:
+                    logger.warning("⚠️ Deepgram service unavailable, falling back to legacy mode")
+                    self.use_streaming = False
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to initialize Deepgram service: {e}, using legacy mode")
+                self.use_streaming = False
+        else:
+            logger.info("ℹ️ Using legacy transcription mode (buffered)")
 
         logger.info("✅ OrchestratorService initialized")
 
@@ -107,8 +128,61 @@ class OrchestratorService:
     # PROCESS AUDIO CHUNK - FIXED
     # ==========================================================
     async def process_audio_chunk(self, audio_bytes: bytes, session_id: str, participant_id=None):
+        """
+        Process audio chunk using either streaming (Deepgram) or legacy (buffered) mode.
+        """
+        # Route to appropriate processing mode
+        if self.use_streaming and self.deepgram_service:
+            return await self._process_audio_streaming(audio_bytes, session_id, participant_id)
+        else:
+            return await self._process_audio_legacy(audio_bytes, session_id, participant_id)
+    
+    # ==========================================================
+    # STREAMING MODE (DEEPGRAM)
+    # ==========================================================
+    async def _process_audio_streaming(self, audio_bytes: bytes, session_id: str, participant_id=None):
+        """
+        Process audio using Deepgram streaming - immediate processing without buffering.
+        """
         try:
-            logger.info(f"🎵 Processing audio chunk - session: {session_id}, participant: {participant_id}, bytes: {len(audio_bytes)}")
+            logger.info(f"🎵 [STREAMING] Processing audio - session: {session_id}, participant: {participant_id}, bytes: {len(audio_bytes)}")
+            
+            # Ensure session exists
+            session = self.active_sessions.setdefault(session_id, SessionData(session_id))
+            session.last_activity = datetime.utcnow()
+            
+            # Convert audio_bytes to PCM format for Deepgram (int16)
+            try:
+                # Assume input is already PCM int16
+                audio_pcm = np.frombuffer(audio_bytes, dtype=np.int16)
+            except Exception as e:
+                logger.warning(f"⚠️ Audio conversion failed for {session_id}: {e}")
+                return None
+            
+            # Send audio directly to Deepgram
+            success = await self.deepgram_service.send_audio(session_id, audio_pcm.tobytes())
+            
+            if not success:
+                logger.warning(f"⚠️ Failed to send audio to Deepgram for {session_id}")
+                return None
+            
+            # Return immediately - transcripts will come via callback
+            return {"type": "streaming", "status": "processing"}
+            
+        except Exception as e:
+            logger.error(f"❌ Streaming audio processing error for {session_id}: {e}", exc_info=True)
+            return None
+    
+    # ==========================================================
+    # LEGACY MODE (BUFFERED WHISPER)
+    # ==========================================================
+    async def _process_audio_legacy(self, audio_bytes: bytes, session_id: str, participant_id=None):
+    async def _process_audio_legacy(self, audio_bytes: bytes, session_id: str, participant_id=None):
+        """
+        Legacy buffered mode using Whisper transcription.
+        """
+        try:
+            logger.info(f"🎵 [LEGACY] Processing audio chunk - session: {session_id}, participant: {participant_id}, bytes: {len(audio_bytes)}")
             
             # Ensure session exists
             session = self.active_sessions.setdefault(session_id, SessionData(session_id))

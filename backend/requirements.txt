@@ -21,6 +21,9 @@ transformers==4.36.2
 openai-whisper==20231117
 # WhisperX will be installed via git in setup script
 
+# Real-time streaming transcription
+deepgram-sdk==3.2.7
+
 # Audio Processing (macOS compatible)
 librosa==0.10.1
 soundfile==0.12.1
