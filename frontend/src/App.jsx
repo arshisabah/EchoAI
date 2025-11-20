@@ -14,6 +14,11 @@ const Dashboard = lazy(() => import('./components/Dashboard'));
 const MeetingRoom = lazy(() => import('./components/MeetingRoom'));
 const AnalyticsDashboard = lazy(() => import('./components/AnalyticsDashboard'));
 
+const preloadComponent = (factory) => {
+  const Component = lazy(factory);
+  Component.preload = factory;
+  return Component;
+};
 
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth();

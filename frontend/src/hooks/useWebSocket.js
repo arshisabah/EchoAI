@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
 const RECONNECT_DELAY = 3000;
 const MAX_RECONNECT_ATTEMPTS = 5;
-const PING_INTERVAL = 30000;
+const PING_INTERVAL = 60000;
 
 export const useWebSocket = (roomId, userId, username, password, role = 'participant') => {
     const [isConnected, setIsConnected] = useState(false);

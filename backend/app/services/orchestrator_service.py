@@ -148,7 +148,7 @@ class OrchestratorService:
                 return None
 
             # Skip silence
-            if np.abs(audio_array).mean() < 0.01:
+            if np.abs(audio_array).mean() < 0.006:
                 logger.debug(f"🔇 Skipping silence for session {session_id} (mean amplitude: {np.abs(audio_array).mean():.6f})")
                 return None
 
@@ -176,23 +176,28 @@ class OrchestratorService:
                 return None
 
             duration_sec = len(combined) / 16000
+            
+            # ✅ ADD DEBUG LOGGING
+            logger.info(f"📊 Buffer stats for {session_id}: duration={duration_sec:.2f}s, samples={len(combined)}")
+
 
             # Wait for at least 0.8 seconds OR detect silence boundary (0.5s silence at end)
             # Reduced from 1.5s to 0.8s for better real-time responsiveness
-            if duration_sec < 2.0:
+            if duration_sec < 1.2:
                 logger.debug(f"⏳ Buffering audio for session {session_id}: {duration_sec:.2f}s / 0.8s minimum")
                 return {"type": "listening", "buffered_duration": duration_sec}
             
              # Check for silence boundary - wait for speaker to finish
             # If no silence detected yet and duration < 4s, keep buffering
-            if duration_sec < 4.0:  # Increased from 2.0s to 4.0s
+            if duration_sec < 3.0:  # Increased from 2.0s to 4.0s
                 # Check if there's a 1.0s silence at the end (increased from 0.5s)
                 tail_samples = min(int(16000 * 1.0), len(combined))
                 tail = combined[-tail_samples:]
                 tail_energy = np.sqrt(np.mean(tail ** 2))
-                
+                 # ✅ CHANGE debug to info for visibility
+                logger.info(f"🔊 Tail energy: {tail_energy:.6f} (threshold: 0.018) - Duration: {duration_sec:.2f}s")
                 logger.debug(f"🔊 Tail energy check for session {session_id}: {tail_energy:.6f} (threshold: 0.02)")
-                if tail_energy >= 0.02:  # Still speaking (increased from 0.015)
+                if tail_energy >= 0.012:  # Still speaking (increased from 0.015)
                     logger.debug(f"🗣️ Still speaking - buffering more audio for session {session_id}")
                     return {"type": "listening", "buffered_duration": duration_sec}
 

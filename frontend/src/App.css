@@ -2,6 +2,22 @@
    ECHOAI COMPLETE STYLES
    ============================================ */
 
+   /* Performance optimizations */
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Use will-change sparingly */
+.backend-status-alert,
+.loading-spinner {
+  will-change: transform, opacity;
+}
+
+/* Reduce repaints */
+.app-main {
+  contain: layout style paint;
+}
 * {
   margin: 0;
   padding: 0;
