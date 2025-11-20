@@ -34,9 +34,20 @@ class TranscriptionService:
     """Production transcription service with multiple backends."""
 
     def __init__(self, device: str = None):
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        # Auto-detect best available device: MPS (Apple Silicon) > CUDA (NVIDIA) > CPU
+        if device:
+            self.device = device
+        elif torch.cuda.is_available():
+            self.device = "cuda"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            self.device = "mps"
+        else:
+            self.device = "cpu"
+        
         self.model = None
         self.model_type = "none"
+        
+        logger.info(f"🖥️ Using device: {self.device}")
         
         self._initialize_models()
 
@@ -52,13 +63,18 @@ class TranscriptionService:
         try:
             import whisperx
             logger.info("Loading WhisperX model...")
+            
+            # WhisperX doesn't support MPS directly yet, use CPU on Apple Silicon
+            whisper_device = self.device if self.device != "mps" else "cpu"
+            compute_type = "float32" if whisper_device == "cpu" else "float16"
+            
             self.model = whisperx.load_model(
                 "tiny", 
-                device=self.device, 
-                compute_type="float32" if self.device == "cpu" else "float16"
+                device=whisper_device, 
+                compute_type=compute_type
             )
             self.model_type = "whisperx"
-            logger.info(f"✅ WhisperX loaded on {self.device}")
+            logger.info(f"✅ WhisperX loaded on {whisper_device}")
             return
         except Exception as e:
             logger.warning(f"WhisperX not available: {e}")
@@ -280,7 +296,7 @@ class TranscriptionService:
         def _sync_transcribe():
             result = self.model.transcribe(
                 audio_array,
-                fp16=(self.device == "cuda"),
+                fp16=(self.device in ["cuda", "mps"]),  # Enable fp16 for both CUDA and MPS
                 language="en",
                 task="transcribe",
                 temperature=0.0,  # Most accurate
