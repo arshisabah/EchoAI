@@ -16,6 +16,7 @@ from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
+from starlette.websockets import WebSocketState
 
 from app.services.meeting_room_manager import (
     get_meeting_room_manager,
@@ -555,6 +556,30 @@ async def test_broadcast(room_id: str):
 
 # WebSocket for Real-Time Collaboration ---------------------------------------
 
+async def safe_send(websocket: WebSocket, data: dict, context: str = "") -> bool:
+    """
+    Safely send data through WebSocket with proper state checking.
+    
+    Args:
+        websocket: WebSocket connection
+        data: Data to send
+        context: Context for logging
+        
+    Returns:
+        True if send succeeded, False otherwise
+    """
+    try:
+        if websocket.client_state == WebSocketState.CONNECTED:
+            await websocket.send_json(data)
+            return True
+        else:
+            logger.debug(f"WebSocket not connected ({context}), skipping send")
+            return False
+    except Exception as e:
+        logger.debug(f"Failed to send ({context}): {e}")
+        return False
+
+
 @router.websocket("/rooms/{room_id}/ws")
 async def meeting_websocket(
     websocket: WebSocket,
@@ -573,7 +598,7 @@ async def meeting_websocket(
         # Ensure room exists
         existing_room = room_manager.rooms.get(room_id)
         if not existing_room:
-            await websocket.send_json({"type": "error", "message": f"Room {room_id} not found"})
+            await safe_send(websocket, {"type": "error", "message": f"Room {room_id} not found"}, "room_not_found")
             await websocket.close()
             return
 
@@ -602,7 +627,7 @@ async def meeting_websocket(
             )
         except Exception as e:
             logger.error(f"Failed to join room {room_id} for user {user_id}: {e}", exc_info=True)
-            await websocket.send_json({"type": "error", "message": str(e)})
+            await safe_send(websocket, {"type": "error", "message": str(e)}, "join_error")
             await websocket.close()
             return
 
@@ -625,18 +650,18 @@ async def meeting_websocket(
 
         # Send welcome + ack to the new user
         room_info = await room_manager.get_room_info(room_id)
-        await websocket.send_json({
+        await safe_send(websocket, {
             "type": "welcome",
             "message": f"Welcome {username}!",
             "your_role": participant.role.value,
             "room_info": room_info
-        })
+        }, "welcome")
 
-        await websocket.send_json({
+        await safe_send(websocket, {
             "type": "connection_ack",
             "message": f"Connected successfully as {username}",
             "timestamp": datetime.utcnow().isoformat()
-        })
+        }, "connection_ack")
 
         # Send peer list (existing participants excluding self) so the client can initiate offers
         peers = []
@@ -647,19 +672,19 @@ async def meeting_websocket(
                     continue
                 peers.append({"user_id": uid, "username": p.username})
 
-        await websocket.send_json({
+        await safe_send(websocket, {
             "type": "peer_list",
             "peers": peers
-        })
+        }, "peer_list")
 
         # Echo a new_participant to the new user (self = True) to make client-side logic uniform
-        await websocket.send_json({
+        await safe_send(websocket, {
             "type": "new_participant",
             "user_id": user_id,
             "username": username,
             "timestamp": datetime.utcnow().isoformat(),
             "self": True
-        })
+        }, "new_participant_self")
 
         # ✅ FIX: Send historical transcripts to newly joined participant
         # This ensures they can see what happened before they joined
@@ -699,7 +724,7 @@ async def meeting_websocket(
                             "timestamp": entry.timestamp.isoformat() if hasattr(entry.timestamp, 'isoformat') else str(entry.timestamp),
                             "is_historical": True  # Mark as historical so frontend can handle differently if needed
                         }
-                        await websocket.send_json(transcript_message)
+                        await safe_send(websocket, transcript_message, "historical_transcript")
                     
                     # Small delay between batches to prevent overwhelming the connection
                     await asyncio.sleep(0.05)
@@ -715,14 +740,11 @@ async def meeting_websocket(
                 data = await asyncio.wait_for(websocket.receive_text(), timeout=180)
             except asyncio.TimeoutError:
                 # send keep-alive ping after 3 minutes of inactivity
-                try:
-                    await websocket.send_json({
-                        "type": "ping_timeout",
-                        "message": "Keep-alive: No message received within 180 seconds.",
-                        "timestamp": datetime.utcnow().isoformat()
-                    })
-                except Exception:
-                    pass
+                await safe_send(websocket, {
+                    "type": "ping_timeout",
+                    "message": "Keep-alive: No message received within 180 seconds.",
+                    "timestamp": datetime.utcnow().isoformat()
+                }, "ping_timeout")
                 continue
             except WebSocketDisconnect:
                 logger.info(f"WebSocketDisconnect for {username} in {room_id}")
@@ -753,10 +775,7 @@ async def meeting_websocket(
                     "timestamp": datetime.utcnow().isoformat()
                 }
                 await room_manager.broadcast_to_room(room_id, chat_message)
-                try:
-                    await websocket.send_json({"type": "chat_ack", "message": chat_message["message"]})
-                except Exception:
-                    pass
+                await safe_send(websocket, {"type": "chat_ack", "message": chat_message["message"]}, "chat_ack")
 
             # WebRTC signaling routing: target_id must be present and will be forwarded
             elif message_type in {"webrtc_offer", "webrtc_answer", "ice_candidate"}:
@@ -767,28 +786,30 @@ async def meeting_websocket(
                     room = room_manager.rooms[room_id]
                     if target_id in room.participants:
                         target_ws = room.participants[target_id].websocket
-                        try:
-                            await target_ws.send_json({
+                        # ✅ FIX: Use room_manager's safe_websocket_send for WebRTC signaling
+                        success = await room_manager.safe_websocket_send(
+                            target_ws,
+                            {
                                 **message,
                                 "from_id": user_id,
                                 "timestamp": datetime.utcnow().isoformat()
-                            })
+                            },
+                            target_id
+                        )
+                        if success:
                             logger.info(f"✅ Forwarded {message_type} from {username} to {target_id}")
-                        except Exception as e:
-                            logger.error(f"❌ Failed to forward {message_type} to {target_id}: {e}", exc_info=True)
+                        else:
+                            logger.warning(f"⚠️ Failed to forward {message_type} to {target_id} (WebSocket not connected)")
                     else:
                         logger.warning(f"⚠️ Target {target_id} not found in room {room_id}. Available participants: {list(room.participants.keys())}")
                 else:
                     logger.warning(f"⚠️ Signaling message without target_id or room {room_id} missing. Message: {message_type}")
 
             elif message_type == "ping":
-                try:
-                    await websocket.send_json({
-                        "type": "pong",
-                        "timestamp": datetime.utcnow().isoformat()
-                    })
-                except Exception:
-                    pass
+                await safe_send(websocket, {
+                    "type": "pong",
+                    "timestamp": datetime.utcnow().isoformat()
+                }, "pong")
 
             else:
                 # Unknown/other messages — log for debugging
@@ -796,22 +817,14 @@ async def meeting_websocket(
 
     except WebSocketDisconnect:
         logger.info(f"❌ {username} disconnected from {room_id}")
-        try:
-            await room_manager.leave_room(room_id, user_id)
-        except Exception:
-            logger.exception("Error during leave_room on WebSocketDisconnect")
     except Exception as e:
         logger.error(f"WebSocket error for {username} in {room_id}: {e}", exc_info=True)
-        try:
-            await room_manager.leave_room(room_id, user_id)
-        except Exception:
-            logger.exception("Error during leave_room on exception")
     finally:
-        # final cleanup: ensure the participant is removed
+        # ✅ FIX: Only call leave_room once in finally block to avoid multiple calls
         try:
             await room_manager.leave_room(room_id, user_id)
-        except Exception:
-            pass
+        except Exception as leave_err:
+            logger.debug(f"Error during leave_room cleanup: {leave_err}")
 
 
 # Audio processing helper -----------------------------------------------------
@@ -864,10 +877,7 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
         # 🔹 Handle lightweight "listening" heartbeats
         if result and result.get("type") == "listening":
             logger.debug(f"⏳ Buffering audio for {username} in {room_id}: {result.get('buffered_duration', 0):.2f}s")
-            try:
-                await websocket.send_json(result)  # send only to this user (not broadcast)
-            except Exception as send_err:
-                logger.warning(f"⚠️ Failed to send listening status to {username}: {send_err}")
+            await safe_send(websocket, result, "listening_status")
             return
 
         # 4️⃣ Skip empty result
