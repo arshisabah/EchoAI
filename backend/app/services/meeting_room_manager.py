@@ -368,6 +368,13 @@ class MeetingRoomManager:
             confidence: Confidence score
             emotion_guidance: Guidance for responding to this emotion
         """
+        logger.info(f"📡 broadcast_transcript called for room {room_id}, user {username}")
+        
+        room = self.rooms.get(room_id)
+        if not room:
+            logger.error(f"❌ Room {room_id} not found in rooms dict")
+            return
+        
         message = {
             "type": "live_transcript",
             "user_id": user_id,
@@ -379,7 +386,11 @@ class MeetingRoomManager:
             "timestamp": datetime.utcnow().isoformat()
         }
         
+        logger.info(f"📤 Broadcasting message to {len(room.participants)} participants: {message}")
+        
         await self.broadcast_to_room(room_id, message)
+        
+        logger.info(f"✅ Broadcast complete to room {room_id}")
         
         # Update participant state
         room = self.rooms.get(room_id)

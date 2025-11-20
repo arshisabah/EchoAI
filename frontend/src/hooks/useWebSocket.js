@@ -71,6 +71,7 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
             wsRef.current.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
+                    console.log('🔍 WebSocket received:', data);
                     setLastMessage(data);
 
                     switch (data.type) {
@@ -85,6 +86,7 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                             break;
 
                         case 'live_transcript':
+                            console.log('📝 Adding transcript:', data.text);
                             setTranscripts((prev) => [data, ...prev].slice(0, 100));
                             break;
 
