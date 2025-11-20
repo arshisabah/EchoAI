@@ -140,11 +140,36 @@ brew services start postgresql@14
 psql -l | grep echoai
 ```
 
+## GPU Acceleration on Apple Silicon
+
+EchoAI automatically detects and uses Apple's Metal Performance Shaders (MPS) for GPU acceleration on M-series chips:
+
+- ✅ **M1/M2/M3 Macs**: Uses MPS for 2-3x faster transcription
+- ✅ **Intel Macs with AMD GPU**: Uses CPU (MPS not available)
+- ✅ **Standard Whisper**: Full MPS support
+- ⚠️ **WhisperX**: Falls back to CPU (MPS support coming soon)
+
+### Verify GPU Acceleration
+
+Check your startup logs for:
+```
+🍎 Apple MPS (Metal) available - GPU acceleration enabled
+✅ Standard Whisper loaded on mps
+```
+
+### Force CPU Mode (for debugging)
+
+If you encounter issues with MPS:
+```bash
+export PYTORCH_ENABLE_MPS_FALLBACK=1
+```
+
 ## Apple Silicon Specific Notes
 
-- **PyTorch**: Automatically uses Metal Performance Shaders (MPS) for GPU acceleration
+- **PyTorch**: Automatically uses Metal Performance Shaders (MPS) for GPU acceleration (requires PyTorch 1.12+)
 - **WhisperX**: CPU-only on M-series (still very fast)
 - **Memory**: 8GB works but 16GB recommended for large models
+- **macOS Version**: Requires macOS 12.3+ for MPS support
 
 ## Performance Tips
 

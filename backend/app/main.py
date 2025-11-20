@@ -32,6 +32,15 @@ async def lifespan(app: FastAPI):
     """Application lifecycle management."""
     logger.info("🚀 Starting EchoAI Backend...")
     
+    # Log device information
+    import torch
+    if torch.cuda.is_available():
+        logger.info(f"🎮 CUDA available: {torch.cuda.get_device_name(0)}")
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        logger.info("🍎 Apple MPS (Metal) available - GPU acceleration enabled")
+    else:
+        logger.info("💻 Using CPU (no GPU acceleration)")
+    
     # Initialize monitoring
     try:
         from app.core.monitoring import get_metrics_collector

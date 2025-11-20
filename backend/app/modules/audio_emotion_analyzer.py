@@ -29,9 +29,15 @@ logger.setLevel(logging.INFO)
 # Model name (change if you have a different checkpoint)
 _MODEL_NAME = "superb/wav2vec2-base-superb-er"
 
-# device
-_DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-logger.info(f"Attempting to load audio emotion model {_MODEL_NAME} on device {_DEVICE}")
+# Detect device: MPS (Apple Silicon) > CUDA (NVIDIA) > CPU
+if torch.cuda.is_available():
+    _DEVICE = torch.device("cuda")
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    _DEVICE = torch.device("mps")
+else:
+    _DEVICE = torch.device("cpu")
+
+logger.info(f"🎭 Loading emotion model on {_DEVICE}")
 
 # Try to load a feature extractor (preferred for audio-only models)
 _feature_extractor = None
