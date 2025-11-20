@@ -67,7 +67,7 @@ class TranscriptionService:
         try:
             import whisper
             logger.info("Loading standard Whisper model...")
-            self.model = whisper.load_model("base", device=self.device)
+            self.model = whisper.load_model("small", device=self.device)
             self.model_type = "whisper"
             logger.info(f"✅ Standard Whisper loaded on {self.device}")
             return
