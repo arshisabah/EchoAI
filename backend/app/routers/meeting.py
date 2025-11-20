@@ -701,11 +701,25 @@ async def meeting_websocket(
                         logger.info(f"⚠️ No audio for emotion analysis (buffer has {len(_room_audio_buffers.get(current_stream_id, []))} chunks)")
                     
                     # Get emotion guidance
-                    guidance_engine = get_emotion_guidance_engine()
-                    guidance = guidance_engine.get_guidance(
-                        emotion["emotion"], text, emotion.get("confidence", 0),
-                        context={"username": current_username, "room_id": current_room_id, "speaker": current_user_id}
-                    )
+                    g# Get emotion guidance (with timeout to prevent blocking broadcasts)
+                    guidance = {}
+                    try:
+                        guidance_engine = get_emotion_guidance_engine()
+                        guidance = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                guidance_engine.get_guidance,
+                                emotion["emotion"], text, emotion.get("confidence", 0),
+                                context={"username": current_username, "room_id": current_room_id, "speaker": current_user_id}
+                            ),
+                            timeout=2.0  # 2 second timeout to prevent OpenAI delays
+                        )
+                        logger.debug(f"✅ Got emotion guidance for {current_username}")
+                    except asyncio.TimeoutError:
+                        logger.warning(f"⚠️ Guidance generation timeout, broadcasting without guidance")
+                        guidance = {}
+                    except Exception as e:
+                        logger.warning(f"⚠️ Guidance generation failed: {e}, broadcasting without guidance")
+                        guidance = {}
                     
                     # Broadcast final transcript with emotion
                     await room_manager.broadcast_transcript(

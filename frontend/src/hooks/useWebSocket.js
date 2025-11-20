@@ -84,7 +84,7 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                                 setParticipants(data.room_info.participants);
                             }
                             break;
-
+                        case 'final_transcript':
                         case 'live_transcript':
                             console.log('✅ Transcript received:', {
                                 username: data.username,

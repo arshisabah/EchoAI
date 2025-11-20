@@ -152,15 +152,19 @@ class OrchestratorService:
             session.last_activity = datetime.utcnow()
             
             # Convert audio_bytes to PCM format for Deepgram (int16)
+            # Send raw audio bytes directly to Deepgram (already PCM int16 from frontend)
             try:
-                # Assume input is already PCM int16
-                audio_pcm = np.frombuffer(audio_bytes, dtype=np.int16)
+                logger.debug(f"📤 Sending {len(audio_bytes)} bytes to Deepgram for {session_id}")
+                success = await self.deepgram_service.send_audio(session_id, audio_bytes)
+                
+                if success:
+                    logger.debug(f"✅ Audio sent successfully to Deepgram")
+                else:
+                    logger.warning(f"⚠️ Deepgram send_audio returned False")
+                    
             except Exception as e:
-                logger.warning(f"⚠️ Audio conversion failed for {session_id}: {e}")
+                logger.error(f"❌ Error sending audio to Deepgram: {e}", exc_info=True)
                 return None
-            
-            # Send audio directly to Deepgram
-            success = await self.deepgram_service.send_audio(session_id, audio_pcm.tobytes())
             
             if not success:
                 logger.warning(f"⚠️ Failed to send audio to Deepgram for {session_id}")
