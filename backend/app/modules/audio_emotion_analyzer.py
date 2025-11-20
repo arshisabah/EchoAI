@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 # Model name (change if you have a different checkpoint)
-_MODEL_NAME = "superb/wav2vec2-base-superb-er"
+_MODEL_NAME = "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition"
 
 # Detect device: MPS (Apple Silicon) > CUDA (NVIDIA) > CPU
 if torch.cuda.is_available():
