@@ -36,6 +36,9 @@ from app.services.room_diarization_service import get_room_diarization_service
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/meeting", tags=["Multi-User Meetings"])
 
+# Constants
+DEFAULT_CONFIDENCE_FALLBACK = 0.9  # Default confidence when not available from transcription
+
 _room_audio_buffers = {}  # In-memory buffer for audio chunks per room
 _room_diarization_active = {}  # Track which rooms have diarization active
 
@@ -687,7 +690,7 @@ async def diarize_meeting_recording(room_id: str):
                                             "start_time": current_start,
                                             "end_time": word_start,
                                             "duration": word_start - current_start,
-                                            "confidence": 0.9,
+                                            "confidence": DEFAULT_CONFIDENCE_FALLBACK,
                                             "word_count": len(current_text)
                                         }
                                         diarized_segments.append(segment)
@@ -720,7 +723,7 @@ async def diarize_meeting_recording(room_id: str):
                                     "start_time": current_start,
                                     "end_time": word_end,
                                     "duration": word_end - current_start,
-                                    "confidence": 0.9,
+                                    "confidence": DEFAULT_CONFIDENCE_FALLBACK,
                                     "word_count": len(current_text)
                                 }
                                 diarized_segments.append(segment)
@@ -936,8 +939,8 @@ async def meeting_websocket(
                             participant_id = room_diarization.resolve_speaker(current_room_id, deepgram_speaker)
                             
                             if not participant_id:
-                                # Unknown speaker - try to assign based on speaking patterns
-                                # For now, just use the deepgram speaker ID
+                                # Unknown speaker - uses Deepgram's speaker ID as fallback
+                                # Speaker mapping could be enhanced with voice profile matching
                                 participant_id = f"speaker_{deepgram_speaker}" if deepgram_speaker is not None else "unknown"
                                 display_name = f"Speaker {deepgram_speaker}" if deepgram_speaker is not None else "Unknown"
                             else:

@@ -16,6 +16,10 @@ from app.services.deepgram_transcription import get_deepgram_service
 
 logger = logging.getLogger(__name__)
 
+# Constants
+MAX_BUFFER_CHUNKS = 3  # Maximum audio chunks to buffer per participant (~300ms)
+INT16_MAX = 32767  # Maximum value for 16-bit signed integer audio
+
 
 class RoomDiarizationService:
     """
@@ -183,9 +187,9 @@ class RoomDiarizationService:
             # Add chunk to buffer
             self.room_buffers[room_id][participant_id].append(audio_chunk)
             
-            # Keep only last 3 chunks per participant (about 300ms)
+            # Keep only last MAX_BUFFER_CHUNKS per participant
             for pid in self.room_buffers[room_id]:
-                if len(self.room_buffers[room_id][pid]) > 3:
+                if len(self.room_buffers[room_id][pid]) > MAX_BUFFER_CHUNKS:
                     self.room_buffers[room_id][pid].pop(0)
             
             # Mix audio from all participants
@@ -206,7 +210,7 @@ class RoomDiarizationService:
                 return
             
             # Convert to PCM int16 bytes
-            audio_int16 = (mixed_audio * 32767).astype(np.int16)
+            audio_int16 = (mixed_audio * INT16_MAX).astype(np.int16)
             audio_bytes = audio_int16.tobytes()
             
             # Send to Deepgram

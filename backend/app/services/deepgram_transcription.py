@@ -14,6 +14,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
+# Constants
+CONNECTION_READY_TIMEOUT = 5.0  # Seconds to wait for connection to be ready
+SEND_AUDIO_READY_TIMEOUT = 2.0  # Seconds to wait for ready state when sending audio
+
 try:
     from deepgram import (
         DeepgramClient,
@@ -246,7 +250,10 @@ class DeepgramStreamingService:
             
             # Wait for connection to be ready (with timeout)
             try:
-                await asyncio.wait_for(self.connection_ready[session_id].wait(), timeout=5.0)
+                await asyncio.wait_for(
+                    self.connection_ready[session_id].wait(), 
+                    timeout=CONNECTION_READY_TIMEOUT
+                )
                 logger.info(f"✅ Connection ready for {session_id}")
             except asyncio.TimeoutError:
                 logger.error(f"❌ Connection ready timeout for {session_id}")
@@ -293,7 +300,10 @@ class DeepgramStreamingService:
             if ready_event and not ready_event.is_set():
                 logger.warning(f"⚠️ Connection not ready for session {session_id}, waiting...")
                 try:
-                    await asyncio.wait_for(ready_event.wait(), timeout=2.0)
+                    await asyncio.wait_for(
+                        ready_event.wait(), 
+                        timeout=SEND_AUDIO_READY_TIMEOUT
+                    )
                 except asyncio.TimeoutError:
                     logger.error(f"❌ Connection ready timeout while sending audio for {session_id}")
                     return False
