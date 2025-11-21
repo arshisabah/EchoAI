@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Download, FileText, Music, Clock, Users, CheckCircle, AlertCircle } from 'lucide-react';
+import { Download, FileText, Music, Clock, Users, CheckCircle, AlertCircle, Sparkles } from 'lucide-react';
 import { meetingAPI } from '../../services/api';
 
 const PostMeetingModal = ({ roomId, onClose }) => {
@@ -9,6 +9,8 @@ const PostMeetingModal = ({ roomId, onClose }) => {
   const [loading, setLoading] = useState(true);
   const [downloadingRecording, setDownloadingRecording] = useState(false);
   const [downloadingTranscript, setDownloadingTranscript] = useState(null);
+  const [generatingSummary, setGeneratingSummary] = useState(false);
+  const [summary, setSummary] = useState(null);
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
 
@@ -73,6 +75,23 @@ const PostMeetingModal = ({ roomId, onClose }) => {
       setError('Failed to download transcript. Please try again.');
     } finally {
       setDownloadingTranscript(null);
+    }
+  };
+
+  const handleGenerateSummary = async () => {
+    setGeneratingSummary(true);
+    setError(null);
+    setSuccessMessage(null);
+
+    try {
+      const data = await meetingAPI.getSummary(roomId);
+      setSummary(data);
+      setSuccessMessage('Summary generated successfully!');
+    } catch (err) {
+      console.error('Summary generation failed:', err);
+      setError('Failed to generate summary. Please try again.');
+    } finally {
+      setGeneratingSummary(false);
     }
   };
 
@@ -194,7 +213,89 @@ const PostMeetingModal = ({ roomId, onClose }) => {
                   </button>
                 </div>
               </div>
+
+              <div className="download-group">
+                <div className="download-header">
+                  <Sparkles size={20} />
+                  <span>AI-Generated Summary</span>
+                </div>
+                <button
+                  className="btn-primary btn-download"
+                  onClick={handleGenerateSummary}
+                  disabled={generatingSummary}
+                >
+                  {generatingSummary ? (
+                    <>
+                      <div className="loading-spinner small"></div>
+                      Generating Summary...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={16} />
+                      Generate Summary
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
+
+            {summary && (
+              <div className="summary-section">
+                <h3>Meeting Summary</h3>
+                <div className="summary-content">
+                  {typeof summary.summary === 'string' ? (
+                    <p>{summary.summary}</p>
+                  ) : (
+                    <>
+                      {summary.summary?.overview && (
+                        <div className="summary-block">
+                          <h4>Overview</h4>
+                          <p>{summary.summary.overview}</p>
+                        </div>
+                      )}
+                      {summary.summary?.key_points && summary.summary.key_points.length > 0 && (
+                        <div className="summary-block">
+                          <h4>Key Points</h4>
+                          <ul>
+                            {summary.summary.key_points.map((point, idx) => (
+                              <li key={idx}>{point}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {summary.summary?.decisions && summary.summary.decisions.length > 0 && (
+                        <div className="summary-block">
+                          <h4>Decisions Made</h4>
+                          <ul>
+                            {summary.summary.decisions.map((decision, idx) => (
+                              <li key={idx}>{decision}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {summary.summary?.action_items && summary.summary.action_items.length > 0 && (
+                        <div className="summary-block">
+                          <h4>Action Items</h4>
+                          <ul>
+                            {summary.summary.action_items.map((item, idx) => (
+                              <li key={idx}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {summary.total_participants && (
+                    <div className="summary-meta">
+                      <span><Users size={14} /> {summary.total_participants} participants</span>
+                      {summary.generated_at && (
+                        <span><Clock size={14} /> Generated at {new Date(summary.generated_at).toLocaleTimeString()}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {error && (
               <div className="message-banner error">
