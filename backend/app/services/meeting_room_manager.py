@@ -305,7 +305,7 @@ class MeetingRoomManager:
                     
                     # ✅ FIX: Add small delay to allow in-flight broadcasts to complete
                     # This prevents premature closure during active transcription
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.05)  # 50ms delay (reduced from 100ms for faster response)
                     
                     # ✅ Close the participant's WebSocket connection
                     try:

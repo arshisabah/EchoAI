@@ -983,7 +983,7 @@ async def meeting_websocket(
                                         emotion["emotion"], text, emotion.get("confidence", 0),
                                         context={"username": display_name, "room_id": current_room_id, "speaker": participant_id}
                                     ),
-                                    timeout=2.0
+                                    timeout=1.0  # 1 second timeout (reduced from 2s for faster response)
                                 )
                             except Exception as e:
                                 logger.warning(f"⚠️ Guidance generation failed: {e}")
@@ -1110,7 +1110,7 @@ async def meeting_websocket(
                                 emotion["emotion"], text, emotion.get("confidence", 0),
                                 context={"username": current_username, "room_id": current_room_id, "speaker": current_user_id}
                             ),
-                            timeout=2.0  # 2 second timeout to prevent OpenAI delays
+                            timeout=1.0  # 1 second timeout (reduced from 2s for faster response)
                         )
                         logger.debug(f"✅ Got emotion guidance for {current_username}")
                     except asyncio.TimeoutError:
@@ -1271,7 +1271,7 @@ async def meeting_websocket(
                         await safe_send(websocket, transcript_message, "historical_transcript")
                     
                     # Small delay between batches to prevent overwhelming the connection
-                    await asyncio.sleep(0.05)
+                    await asyncio.sleep(0.02)  # 20ms delay (reduced from 50ms for faster loading)
                 
                 logger.info(f"✅ Historical transcripts sent to {username}")
         except Exception as e:
