@@ -526,6 +526,260 @@ def _generate_srt_transcript(entries) -> str:
     return "\n".join(lines)
 
 
+@router.post("/rooms/{room_id}/diarize")
+async def diarize_meeting_recording(room_id: str):
+    """
+    Perform offline diarization on the saved meeting recording.
+    
+    This endpoint:
+    1. Gets the saved WAV recording from the audio recorder
+    2. Sends it to Deepgram's pre-recorded API with diarization enabled
+    3. Parses speaker labels and timestamps
+    4. Stores results with speaker metadata
+    5. Returns structured JSON with speaker segments
+    
+    Args:
+        room_id: Room identifier
+        
+    Returns:
+        Diarization results with speaker segments and timestamps
+    """
+    try:
+        from app.core.config import settings
+        
+        # Check if Deepgram is available
+        if not settings.DEEPGRAM_API_KEY:
+            raise HTTPException(
+                status_code=503, 
+                detail="Deepgram API key not configured. Set DEEPGRAM_API_KEY environment variable."
+            )
+        
+        # Get the recorder
+        recorder = get_recorder(room_id)
+        if not recorder:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"No recording found for room {room_id}"
+            )
+        
+        # Stop recording if still active
+        if recorder.is_recording:
+            recorder.stop_recording()
+        
+        # Get WAV bytes
+        wav_bytes = recorder.get_wav_bytes()
+        if not wav_bytes or len(wav_bytes) < 100:
+            raise HTTPException(
+                status_code=404, 
+                detail="No audio data available for diarization"
+            )
+        
+        logger.info(f"🎙️ Starting offline diarization for room {room_id}, audio size: {len(wav_bytes)} bytes")
+        
+        # Use Deepgram pre-recorded API with diarization
+        try:
+            from deepgram import DeepgramClient, PrerecordedOptions, FileSource
+            
+            # Initialize Deepgram client
+            deepgram = DeepgramClient(settings.DEEPGRAM_API_KEY)
+            
+            # Prepare audio payload
+            payload: FileSource = {
+                "buffer": wav_bytes,
+            }
+            
+            # Configure options with diarization
+            options = PrerecordedOptions(
+                model="nova-2",
+                smart_format=True,
+                diarize=True,  # Enable speaker diarization
+                punctuate=True,
+                paragraphs=True,
+                utterances=True,
+            )
+            
+            # Make request to Deepgram
+            logger.info(f"📤 Sending audio to Deepgram for diarization...")
+            response = deepgram.listen.rest.v("1").transcribe_file(payload, options)
+            
+            logger.info(f"✅ Received diarization response from Deepgram")
+            
+        except ImportError:
+            raise HTTPException(
+                status_code=503,
+                detail="Deepgram SDK not installed. Run: pip install deepgram-sdk"
+            )
+        except Exception as e:
+            logger.error(f"❌ Deepgram API error: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Deepgram API error: {str(e)}"
+            )
+        
+        # Parse diarization results
+        diarized_segments = []
+        speaker_stats = {}
+        
+        try:
+            # Extract results
+            if hasattr(response, 'results') and response.results:
+                results = response.results
+                
+                # Process utterances (speaker-separated segments)
+                if hasattr(results, 'utterances') and results.utterances:
+                    for utterance in results.utterances:
+                        speaker_id = utterance.speaker if hasattr(utterance, 'speaker') else 0
+                        text = utterance.transcript if hasattr(utterance, 'transcript') else ""
+                        start = utterance.start if hasattr(utterance, 'start') else 0
+                        end = utterance.end if hasattr(utterance, 'end') else 0
+                        confidence = utterance.confidence if hasattr(utterance, 'confidence') else 0
+                        
+                        segment = {
+                            "speaker_id": f"Speaker {speaker_id}",
+                            "text": text,
+                            "start_time": start,
+                            "end_time": end,
+                            "duration": end - start,
+                            "confidence": confidence,
+                            "word_count": len(text.split())
+                        }
+                        
+                        diarized_segments.append(segment)
+                        
+                        # Update speaker stats
+                        speaker_key = f"Speaker {speaker_id}"
+                        if speaker_key not in speaker_stats:
+                            speaker_stats[speaker_key] = {
+                                "total_duration": 0,
+                                "total_words": 0,
+                                "segment_count": 0
+                            }
+                        
+                        speaker_stats[speaker_key]["total_duration"] += (end - start)
+                        speaker_stats[speaker_key]["total_words"] += len(text.split())
+                        speaker_stats[speaker_key]["segment_count"] += 1
+                
+                # If no utterances, fall back to words with speaker labels
+                elif hasattr(results, 'channels') and len(results.channels) > 0:
+                    channel = results.channels[0]
+                    if hasattr(channel, 'alternatives') and len(channel.alternatives) > 0:
+                        alternative = channel.alternatives[0]
+                        
+                        if hasattr(alternative, 'words'):
+                            current_speaker = None
+                            current_text = []
+                            current_start = None
+                            
+                            for word in alternative.words:
+                                word_speaker = word.speaker if hasattr(word, 'speaker') else 0
+                                word_text = word.word if hasattr(word, 'word') else ""
+                                word_start = word.start if hasattr(word, 'start') else 0
+                                word_end = word.end if hasattr(word, 'end') else 0
+                                
+                                # If speaker changed, save previous segment
+                                if current_speaker is not None and word_speaker != current_speaker:
+                                    if current_text:
+                                        segment = {
+                                            "speaker_id": f"Speaker {current_speaker}",
+                                            "text": " ".join(current_text),
+                                            "start_time": current_start,
+                                            "end_time": word_start,
+                                            "duration": word_start - current_start,
+                                            "confidence": 0.9,
+                                            "word_count": len(current_text)
+                                        }
+                                        diarized_segments.append(segment)
+                                        
+                                        # Update stats
+                                        speaker_key = f"Speaker {current_speaker}"
+                                        if speaker_key not in speaker_stats:
+                                            speaker_stats[speaker_key] = {
+                                                "total_duration": 0,
+                                                "total_words": 0,
+                                                "segment_count": 0
+                                            }
+                                        speaker_stats[speaker_key]["total_duration"] += segment["duration"]
+                                        speaker_stats[speaker_key]["total_words"] += len(current_text)
+                                        speaker_stats[speaker_key]["segment_count"] += 1
+                                    
+                                    current_text = []
+                                    current_start = word_start
+                                
+                                current_speaker = word_speaker
+                                current_text.append(word_text)
+                                if current_start is None:
+                                    current_start = word_start
+                            
+                            # Save last segment
+                            if current_text:
+                                segment = {
+                                    "speaker_id": f"Speaker {current_speaker}",
+                                    "text": " ".join(current_text),
+                                    "start_time": current_start,
+                                    "end_time": word_end,
+                                    "duration": word_end - current_start,
+                                    "confidence": 0.9,
+                                    "word_count": len(current_text)
+                                }
+                                diarized_segments.append(segment)
+                                
+                                speaker_key = f"Speaker {current_speaker}"
+                                if speaker_key not in speaker_stats:
+                                    speaker_stats[speaker_key] = {
+                                        "total_duration": 0,
+                                        "total_words": 0,
+                                        "segment_count": 0
+                                    }
+                                speaker_stats[speaker_key]["total_duration"] += segment["duration"]
+                                speaker_stats[speaker_key]["total_words"] += len(current_text)
+                                speaker_stats[speaker_key]["segment_count"] += 1
+            
+        except Exception as e:
+            logger.error(f"❌ Error parsing diarization results: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error parsing diarization results: {str(e)}"
+            )
+        
+        # Store diarization results in transcript store
+        try:
+            store = get_transcript_store()
+            
+            for segment in diarized_segments:
+                await store.add_transcript_entry(
+                    meeting_id=room_id,
+                    speaker=segment["speaker_id"],
+                    text=segment["text"],
+                    confidence=segment["confidence"]
+                )
+            
+            logger.info(f"✅ Stored {len(diarized_segments)} diarized segments for room {room_id}")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to store diarization results: {e}")
+        
+        # Return results
+        return {
+            "room_id": room_id,
+            "diarization_complete": True,
+            "segments": diarized_segments,
+            "speaker_count": len(speaker_stats),
+            "speaker_stats": speaker_stats,
+            "total_segments": len(diarized_segments),
+            "total_duration": sum(s["duration"] for s in diarized_segments),
+            "generated_at": datetime.utcnow().isoformat()
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error in offline diarization: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Offline diarization error: {str(e)}"
+        )
+
+
 # Test endpoint for WebSocket broadcast verification
 @router.post("/rooms/{room_id}/test-broadcast")
 async def test_broadcast(room_id: str):
