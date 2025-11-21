@@ -892,13 +892,35 @@ async def meeting_websocket(
             return
 
         logger.info(f"✅ {username} joined {room_id} as {participant.role.value}")
-
-        # Check if we should use room-level diarization or per-user streaming
-        from app.core.config import settings
-        use_room_diarization = settings.USE_ROOM_DIARIZATION
-        
         # Initialize streaming transcription
         orchestrator = get_orchestrator_service()
+        from app.core.config import settings
+        logger.info(f"🔍 Configuration check:")
+        logger.info(f"   - USE_STREAMING_TRANSCRIPTION: {settings.USE_STREAMING_TRANSCRIPTION}")
+        logger.info(f"   - USE_ROOM_DIARIZATION: {getattr(settings, 'USE_ROOM_DIARIZATION', False)}")
+        logger.info(f"   - DEEPGRAM_API_KEY exists: {bool(settings.DEEPGRAM_API_KEY)}")
+        logger.info(f"   - orchestrator.use_streaming: {orchestrator.use_streaming}")
+        logger.info(f"   - orchestrator.deepgram_service exists: {orchestrator.deepgram_service is not None}")
+
+
+        # Check if we should use room-level diarization or per-user streaming
+        use_room_diarization = settings.USE_ROOM_DIARIZATION
+        
+        
+        # ✅ ADD THIS DEBUG BLOCK HERE:
+        logger.info(f"🔍 Checking streaming mode...")
+        logger.info(f"   - use_room_diarization: {use_room_diarization}")
+        logger.info(f"   - orchestrator.use_streaming: {orchestrator.use_streaming}")
+
+        if use_room_diarization and orchestrator.use_streaming:
+            logger.info(f"🎙️ BRANCH: Room-level diarization mode")
+        elif orchestrator.use_streaming and orchestrator.deepgram_service:
+            logger.info(f"🎙️ BRANCH: Per-user streaming mode")
+            logger.info(f"   - About to initialize Deepgram for {username}")
+        else:
+            logger.info(f"🎙️ BRANCH: Legacy mode (no streaming)")
+            logger.info(f"   - orchestrator.use_streaming = {orchestrator.use_streaming}")
+            logger.info(f"   - orchestrator.deepgram_service = {orchestrator.deepgram_service}")
         
         if use_room_diarization and orchestrator.use_streaming:
             # Room-level diarization mode (mixed stream with speaker identification)
@@ -1130,7 +1152,9 @@ async def meeting_websocket(
                 except Exception as e:
                     logger.error(f"❌ Error processing Deepgram transcript: {e}", exc_info=True)
             
-            # Start Deepgram stream for THIS USER (unique stream per participant)
+            logger.info(f"🎙️ About to start Deepgram stream for {username} (stream: {stream_id})")
+
+        try:
             success = await orchestrator.deepgram_service.start_stream(
                 session_id=stream_id,
                 on_transcript=on_deepgram_transcript,
@@ -1141,11 +1165,18 @@ async def meeting_websocket(
                 diarize=False  # We're using user_id instead
             )
             
+            logger.info(f"🔧 start_stream() returned: {success} for {username}")
+            
             if success:
                 logger.info(f"✅ Deepgram stream started for {username} (stream: {stream_id})")
+                logger.info(f"🔍 Active connections: {list(orchestrator.deepgram_service.connections.keys())}")
             else:
-                logger.warning(f"⚠️ Failed to start Deepgram stream for {username}, will use legacy mode")
-        
+                logger.error(f"❌ Failed to start Deepgram stream for {username}, falling back to legacy mode")
+                
+        except Exception as e:
+            logger.error(f"❌ Exception starting Deepgram stream for {username}: {e}", exc_info=True)
+            success = False
+                
         # Start recording if this is the first participant
         recorder = get_or_create_recorder(room_id)
         if not recorder.is_recording:

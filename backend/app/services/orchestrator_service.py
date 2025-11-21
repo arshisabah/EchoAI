@@ -85,7 +85,7 @@ class OrchestratorService:
         self.audio_buffers: AudioBufferDict = AudioBufferDict()
         
         # Initialize streaming transcription if enabled
-        self.use_streaming = settings.USE_STREAMING_TRANSCRIPTION and settings.DEEPGRAM_API_KEY
+        self.use_streaming = settings.USE_STREAMING_TRANSCRIPTION and  bool(settings.DEEPGRAM_API_KEY)  
         self.deepgram_service = None
         
         if self.use_streaming:
@@ -154,13 +154,18 @@ class OrchestratorService:
             # Convert audio_bytes to PCM format for Deepgram (int16)
             # Send raw audio bytes directly to Deepgram (already PCM int16 from frontend)
             try:
+                # ✅ FIX 4: Check if connection exists BEFORE sending
+                if session_id not in self.deepgram_service.connections:
+                    logger.error(f"❌ No connection found for {session_id}. Available: {list(self.deepgram_service.connections.keys())}")
+                    return None
+                
                 logger.debug(f"📤 Sending {len(audio_bytes)} bytes to Deepgram for {session_id}")
                 success = await self.deepgram_service.send_audio(session_id, audio_bytes)
                 
                 if success:
                     logger.debug(f"✅ Audio sent successfully to Deepgram")
                 else:
-                    logger.warning(f"⚠️ Deepgram send_audio returned False")
+                    logger.warning(f"⚠️ Deepgram send_audio returned False for {session_id}")
                     
             except Exception as e:
                 logger.error(f"❌ Error sending audio to Deepgram: {e}", exc_info=True)

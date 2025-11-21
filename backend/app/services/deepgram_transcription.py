@@ -240,13 +240,24 @@ class DeepgramStreamingService:
                 vad_events=True,  # Enable Voice Activity Detection events
             )
             
-            # Start the connection
-            if not dg_connection.start(options):
-                logger.error(f"❌ Failed to start Deepgram connection for {session_id}")
-                return False
-            
-            # Store connection
+            # FIX 1: Store connection BEFORE starting (prevents race condition)
             self.connections[session_id] = dg_connection
+            logger.info(f"📝 Pre-registered connection for {session_id}")
+
+            # Start the connection
+            start_result = dg_connection.start(options)
+            logger.info(f"🔧 Connection start() returned: {start_result} for {session_id}")
+
+            if not start_result:
+                logger.error(f"❌ Failed to start Deepgram connection for {session_id}")
+                # Clean up failed connection
+                if session_id in self.connections:
+                    del self.connections[session_id]
+                return False
+
+            #  FIX 2: Add small delay to ensure connection is ready
+            await asyncio.sleep(0.15)
+            logger.info(f"✅ Connection fully established for {session_id}")
             
             # Wait for connection to be ready (with timeout)
             try:
