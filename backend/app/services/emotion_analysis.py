@@ -5,6 +5,7 @@ Emotion Analysis Service for EchoAI - Uses OpenAI GPT-4o-mini.
 
 import logging
 import uuid
+import re  # For word boundary matching in keyword fallback
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 import json
@@ -27,13 +28,23 @@ class EmotionService:
         self.supported_emotions = SUPPORTED_EMOTIONS
         self._client = None  # Lazy initialization
         logger.info("EmotionService initialized (OpenAI client lazy-loaded)")
+        logger.debug(f"Supported emotions: {', '.join(SUPPORTED_EMOTIONS)}")
 
     def _get_client(self):
         """Lazy load OpenAI client."""
         if self._client is None:
             from openai import AsyncOpenAI
             from app.core.config import settings
+            
+            # Validate API key
+            if not settings.OPENAI_API_KEY or settings.OPENAI_API_KEY == "your_openai_key_here":
+                logger.error("❌ OpenAI API key is missing or not configured!")
+                logger.error("Please set OPENAI_API_KEY environment variable")
+                raise ValueError("OpenAI API key not configured")
+            
+            logger.debug(f"✅ Initializing OpenAI client (API key: ...{settings.OPENAI_API_KEY[-4:]})")
             self._client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+            logger.info("✅ OpenAI client initialized successfully")
         return self._client
 
     async def analyze_text(self, text: str) -> Dict[str, Any]:
@@ -42,7 +53,10 @@ class EmotionService:
         
         Returns dict with 'emotion', 'confidence', and 'scores'.
         """
+        logger.debug(f"🎭 analyze_text called with text: '{text[:100]}...' (length: {len(text)})")
+        
         if not text.strip():
+            logger.debug("⚠️ Empty text provided, returning neutral emotion")
             return {
                 "emotion": "neutral",
                 "confidence": 0.0,
@@ -50,7 +64,10 @@ class EmotionService:
             }
 
         try:
+            logger.debug("📡 Attempting to get OpenAI client...")
             client = self._get_client()
+            logger.debug("✅ OpenAI client obtained")
+            
             emotions_str = ", ".join(self.supported_emotions)
             
             prompt = (
@@ -60,6 +77,8 @@ class EmotionService:
                 "'scores': {emotion: score}}.\n\n"
                 f"Text: \"{text}\""
             )
+            
+            logger.debug(f"📤 Sending request to OpenAI GPT-4o-mini...")
 
             response = await client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -73,12 +92,16 @@ class EmotionService:
                 temperature=0.1,
                 max_tokens=300
             )
+            
+            logger.debug(f"✅ Received response from OpenAI")
 
             content = response.choices[0].message.content.strip()
+            logger.debug(f"📥 OpenAI response content: {content[:200]}")
             
             try:
                 # ✅ FIX: Remove markdown code blocks if present
                 if content.startswith("```"):
+                    logger.debug("🔧 Removing markdown code blocks from response")
                     # Extract JSON from markdown code block
                     lines = content.split("\n")
                     json_lines = []
@@ -92,10 +115,11 @@ class EmotionService:
                             json_lines.append(line)
                     
                     content = "\n".join(json_lines).strip()
+                    logger.debug(f"🔧 Cleaned content: {content[:200]}")
                 
                 # ✅ FIX: Handle empty responses
                 if not content:
-                    logger.warning("Empty content from OpenAI, using fallback")
+                    logger.warning("⚠️ Empty content from OpenAI, using fallback")
                     return self._fallback_emotion_analysis(text)
                 
                 result = json.loads(content)
@@ -103,7 +127,10 @@ class EmotionService:
                 confidence = float(result.get("confidence", 0.5))
                 scores = result.get("scores", {})
                 
+                logger.info(f"✅ Detected emotion: {emotion} (confidence: {confidence:.2f})")
+                
                 if emotion not in self.supported_emotions:
+                    logger.warning(f"⚠️ Unsupported emotion '{emotion}' returned, defaulting to neutral")
                     emotion = "neutral"
                     confidence = 0.3
                 
@@ -119,11 +146,17 @@ class EmotionService:
                 }
                 
             except json.JSONDecodeError as e:
-                logger.warning(f"JSON parse error: {e}. Content: {content[:200]}")
+                logger.warning(f"❌ JSON parse error: {e}. Content: {content[:200]}")
+                logger.warning("🔄 Falling back to keyword-based analysis")
                 return self._fallback_emotion_analysis(text)
 
+        except ValueError as e:
+            logger.error(f"❌ Configuration error: {e}")
+            logger.warning("🔄 Using keyword-based fallback due to configuration error")
+            return self._fallback_emotion_analysis(text)
         except Exception as e:
-            logger.error(f"Emotion analysis failed: {e}")
+            logger.error(f"❌ Emotion analysis failed: {e}", exc_info=True)
+            logger.warning("🔄 Falling back to neutral emotion")
             return {
                 "emotion": "neutral",
                 "confidence": 0.0,
@@ -131,33 +164,123 @@ class EmotionService:
             }
 
     def _fallback_emotion_analysis(self, text: str) -> Dict[str, Any]:
-        """Simple keyword-based fallback."""
+        """
+        Enhanced keyword-based fallback with expanded vocabulary.
+        This is used when OpenAI is unavailable or returns invalid results.
+        Uses word boundary matching to prevent false positives.
+        """
+        logger.info(f"🔄 Using keyword-based fallback analysis for: '{text[:50]}...'")
         text_lower = text.lower()
         
+        # Expanded emotion keywords with stronger patterns
         emotion_keywords = {
-            "happy": ["happy", "joy", "excited", "great", "awesome"],
-            "sad": ["sad", "down", "depressed", "unhappy"],
-            "angry": ["angry", "mad", "furious", "upset"],
-            "frustrated": ["frustrated", "annoyed", "stressed"],
-            "confused": ["confused", "unclear", "don't understand"]
+            "happy": {
+                "keywords": ["happy", "joy", "joyful", "excited", "great", "awesome", "wonderful", 
+                           "fantastic", "excellent", "amazing", "delighted", "pleased", "glad",
+                           "thrilled", "love", "loving", "brilliant", "perfect", "yay", "yes!"],
+                "weight": 0.7
+            },
+            "sad": {
+                "keywords": ["sad", "down", "depressed", "miserable", "gloomy", 
+                           "disappointed", "heartbroken", "sorrowful", "melancholy", "unfortunate",
+                           "terrible", "awful", "bad news", "sorry to hear"],
+                "weight": 0.7
+            },
+            "angry": {
+                "keywords": ["angry", "mad", "furious", "upset", "rage", "outraged", "irritated",
+                           "pissed", "annoyed", "infuriated", "disgusted", "hate", "hateful",
+                           "ridiculous", "unacceptable", "damn"],
+                "weight": 0.75
+            },
+            "frustrated": {
+                "keywords": ["frustrated", "frustrating", "annoyed", "annoying", "stressed", 
+                           "stress", "struggling", "struggle", "difficult", "can't figure",
+                           "not working", "broken", "fail", "failing", "why won't", "keeps breaking"],
+                "weight": 0.7
+            },
+            "confused": {
+                "keywords": ["confused", "confusing", "unclear", "don't understand", "not sure",
+                           "uncertain", "puzzled", "bewildered", "lost", "what do you mean",
+                           "how does", "why does", "help me understand", "clarify"],
+                "weight": 0.6
+            },
+            "excited": {
+                "keywords": ["excited", "exciting", "can't wait", "looking forward", "pumped",
+                           "enthusiastic", "eager", "anticipated", "stoked", "hyped"],
+                "weight": 0.7
+            },
+            "anxious": {
+                "keywords": ["anxious", "worried", "nervous", "concerned", "afraid", "scared",
+                           "fearful", "apprehensive", "uneasy", "worried about", "what if",
+                           "hope it works", "hopefully", "crossing fingers"],
+                "weight": 0.65
+            },
+            "confident": {
+                "keywords": ["confident", "sure", "certain", "definitely", "absolutely", 
+                           "no doubt", "guaranteed", "convinced", "assured", "positive"],
+                "weight": 0.6
+            },
+            "surprised": {
+                "keywords": ["surprised", "shocking", "wow", "unexpected", "didn't expect",
+                           "can't believe", "unbelievable", "astonishing"],
+                "weight": 0.6
+            },
+            "bored": {
+                "keywords": ["bored", "boring", "dull", "monotonous", "tedious", "uninteresting",
+                           "yawn", "whatever", "meh"],
+                "weight": 0.6
+            },
+            "disappointed": {
+                "keywords": ["disappointed", "disappointing", "let down", "expected more",
+                           "hoped for", "not what I", "underwhelming"],
+                "weight": 0.65
+            }
         }
         
         detected = "neutral"
-        confidence = 0.3
+        max_confidence = 0.3
+        matched_keywords = []
         
-        for emotion, keywords in emotion_keywords.items():
-            if any(kw in text_lower for kw in keywords):
-                detected = emotion
-                confidence = 0.6
-                break
+        # Check for emotion keywords with word boundaries
+        for emotion, config in emotion_keywords.items():
+            keywords = config["keywords"]
+            base_weight = config["weight"]
+            
+            matches = []
+            for kw in keywords:
+                # Use word boundaries for single words, phrase matching for multi-word keywords
+                if ' ' in kw:
+                    # Multi-word phrase - check for exact substring match
+                    if kw in text_lower:
+                        matches.append(kw)
+                else:
+                    # Single word - use word boundary regex to avoid false positives
+                    pattern = r'\b' + re.escape(kw) + r'\b'
+                    if re.search(pattern, text_lower):
+                        matches.append(kw)
+            
+            if matches:
+                # Calculate confidence based on number and strength of matches
+                match_count = len(matches)
+                confidence = min(base_weight + (match_count - 1) * 0.05, 0.95)
+                
+                if confidence > max_confidence:
+                    max_confidence = confidence
+                    detected = emotion
+                    matched_keywords = matches
+        
+        logger.info(f"✅ Fallback detected: {detected} (confidence: {max_confidence:.2f})")
+        if matched_keywords:
+            logger.debug(f"   Matched keywords: {', '.join(matched_keywords)}")
+        
+        # Build scores dictionary
+        scores = {e: 0.1 for e in self.supported_emotions}
+        scores[detected] = max_confidence
         
         return {
             "emotion": detected,
-            "confidence": confidence,
-            "scores": {
-                e: (0.6 if e == detected else 0.1) 
-                for e in self.supported_emotions
-            }
+            "confidence": max_confidence,
+            "scores": scores
         }
 
     async def analyze_batch(self, texts: List[str]) -> List[Dict[str, Any]]:
@@ -252,27 +375,40 @@ async def analyze_text_and_audio_combined(
             }
         }
     """
+    logger.debug(f"🔀 analyze_text_and_audio_combined called")
+    logger.debug(f"   Text: '{text[:100]}...' (length: {len(text)})")
+    logger.debug(f"   Audio: {'provided' if audio_array is not None else 'not provided'}")
+    logger.debug(f"   Weights: text={text_weight}, audio={audio_weight}")
+    
     from app.services.dependencies import get_emotion_service
     service = get_emotion_service()
 
     # --- Analyze text-based emotion ---
+    logger.debug("📝 Analyzing text-based emotion...")
     text_result = await service.analyze_text(text)
     if not text_result:
+        logger.warning("⚠️ Text analysis returned None, using neutral")
         text_result = {"emotion": "neutral", "confidence": 0.0}
+    logger.info(f"✅ Text emotion: {text_result.get('emotion', 'neutral')} (confidence: {text_result.get('confidence', 0):.2f})")
 
     # --- Analyze audio-based emotion (optional) ---
     audio_result = None
     if audio_array is not None:
+        logger.debug(f"🎤 Analyzing audio-based emotion (array length: {len(audio_array)})...")
         try:
             from app.modules.audio_emotion_analyzer import analyze_audio_emotion
             import asyncio
             audio_result = await asyncio.to_thread(analyze_audio_emotion, audio_array, sample_rate)
+            logger.info(f"✅ Audio emotion: {audio_result.get('emotion', 'neutral')} (confidence: {audio_result.get('confidence', 0):.2f})")
         except Exception as e:
-            logger.error(f"Audio emotion analysis failed: {e}")
+            logger.error(f"❌ Audio emotion analysis failed: {e}", exc_info=True)
             audio_result = {"emotion": "neutral", "confidence": 0.0}
+    else:
+        logger.debug("ℹ️ No audio provided for emotion analysis")
 
     # --- If no audio available, fallback to text only ---
     if audio_result is None:
+        logger.info(f"➡️ Using text-only emotion: {text_result['emotion']}")
         return {
             "emotion": text_result["emotion"],
             "confidence": text_result["confidence"],
@@ -285,14 +421,22 @@ async def analyze_text_and_audio_combined(
     a_emo = audio_result.get("emotion", "neutral")
     a_conf = float(audio_result.get("confidence", 0.0))
 
+    logger.debug(f"🔀 Combining emotions:")
+    logger.debug(f"   Text: {t_emo} ({t_conf:.2f}) × {text_weight} = {t_conf * text_weight:.2f}")
+    logger.debug(f"   Audio: {a_emo} ({a_conf:.2f}) × {audio_weight} = {a_conf * audio_weight:.2f}")
+
     # Choose dominant emotion
     if t_emo == a_emo:
         final_emotion = t_emo
+        logger.debug(f"✅ Both sources agree: {final_emotion}")
     else:
         final_emotion = a_emo if a_conf * audio_weight > t_conf * text_weight else t_emo
+        logger.debug(f"⚖️ Weighted selection: {final_emotion} (text: {t_emo}, audio: {a_emo})")
 
     # Weighted confidence
     final_confidence = round(t_conf * text_weight + a_conf * audio_weight, 3)
+    
+    logger.info(f"✅ Combined emotion result: {final_emotion} (confidence: {final_confidence:.2f})")
 
     return {
         "emotion": final_emotion,

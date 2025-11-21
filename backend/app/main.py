@@ -127,12 +127,13 @@ async def add_process_time_header(request: Request, call_next):
 
 
 # Include routers
-from app.routers import meeting, transcript, summary, analytics
+from app.routers import meeting, transcript, summary, analytics, debug
 
 app.include_router(meeting.router)       # Multi-user meetings (PRIMARY)
 app.include_router(transcript.router)    # Legacy single-user support
 app.include_router(summary.router)       # AI summaries
 app.include_router(analytics.router)     # Meeting analytics
+app.include_router(debug.router)         # Debug endpoints
 
 logger.info("✅ All API routers loaded")
 

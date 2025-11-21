@@ -24,7 +24,7 @@ from transformers import (
 )
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)  # Enable debug logging for emotion analysis
 
 # Model name (change if you have a different checkpoint)
 _MODEL_NAME = "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition"
@@ -45,33 +45,37 @@ _processor = None
 _model = None
 _MODEL_AVAILABLE = False
 
+logger.debug(f"🔧 Attempting to load feature extractor for {_MODEL_NAME}")
 try:
     _feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(_MODEL_NAME)
-    logger.info("Loaded Wav2Vec2FeatureExtractor.")
+    logger.info("✅ Loaded Wav2Vec2FeatureExtractor.")
 except Exception as exc:
-    logger.warning(f"Could not load Wav2Vec2FeatureExtractor: {exc}. Trying Wav2Vec2Processor...")
+    logger.warning(f"⚠️ Could not load Wav2Vec2FeatureExtractor: {exc}. Trying Wav2Vec2Processor...")
     try:
         _processor = Wav2Vec2Processor.from_pretrained(_MODEL_NAME)
-        logger.info("Loaded Wav2Vec2Processor.")
+        logger.info("✅ Loaded Wav2Vec2Processor.")
     except Exception as exc2:
-        logger.warning(f"Failed to load processor/feature_extractor for {_MODEL_NAME}: {exc2}. Emotion analysis will use fallback.")
+        logger.warning(f"❌ Failed to load processor/feature_extractor for {_MODEL_NAME}: {exc2}. Emotion analysis will use fallback.")
         _feature_extractor = None
         _processor = None
 
 # Load model only if processor/extractor was loaded
 if _feature_extractor or _processor:
+    logger.debug("🔧 Feature extractor/processor loaded, now loading model...")
     try:
         _model = Wav2Vec2ForSequenceClassification.from_pretrained(_MODEL_NAME)
         _model.to(_DEVICE)
         _model.eval()
         _MODEL_AVAILABLE = True
         logger.info("✅ Loaded Wav2Vec2ForSequenceClassification model successfully.")
+        logger.info(f"✅ Audio emotion model is ready on {_DEVICE}")
     except Exception as exc:
-        logger.warning(f"Error loading model {_MODEL_NAME}: {exc}. Emotion analysis will use fallback.")
+        logger.warning(f"❌ Error loading model {_MODEL_NAME}: {exc}. Emotion analysis will use fallback.")
         _model = None
         _MODEL_AVAILABLE = False
 else:
     logger.warning("⚠️ Audio emotion model not available. Using fallback emotion detection.")
+    logger.warning("To enable audio emotion: pip install transformers torch")
 
 # id2label mapping (only if model loaded)
 _EMOTION_LABELS = {}
@@ -96,13 +100,16 @@ def analyze_audio_emotion(audio_array: np.ndarray, sample_rate: int = 16000) -> 
         "scores": {label: score, ...}
       }
     """
+    logger.debug(f"🎤 analyze_audio_emotion called - array shape: {audio_array.shape if audio_array is not None else 'None'}, sample_rate: {sample_rate}")
+    
     # Basic validations & conversions
     if audio_array is None or len(audio_array) == 0:
+        logger.debug("⚠️ Empty audio array, returning neutral")
         return {"emotion": "neutral", "confidence": 0.0, "scores": {}}
 
     # If model is not available, return fallback response
     if not _MODEL_AVAILABLE or _model is None:
-        logger.debug("Audio emotion model not available, using fallback.")
+        logger.debug("⚠️ Audio emotion model not available, using fallback.")
         return {
             "emotion": "neutral",
             "confidence": 0.5,
@@ -116,25 +123,32 @@ def analyze_audio_emotion(audio_array: np.ndarray, sample_rate: int = 16000) -> 
     if np.issubdtype(audio.dtype, np.integer):
         max_val = np.iinfo(audio.dtype).max
         audio = audio.astype("float32") / float(max_val)
+        logger.debug(f"🔧 Converted integer audio to float32")
     else:
         audio = audio.astype("float32")
 
     # If audio has multiple channels, average to mono
     if audio.ndim > 1:
         audio = np.mean(audio, axis=1)
+        logger.debug(f"🔧 Converted multi-channel audio to mono")
 
     try:
+        logger.debug(f"🔧 Processing audio: {len(audio)} samples at {sample_rate}Hz")
+        
         # Prepare inputs using feature_extractor or processor
         if _feature_extractor is not None:
             inputs = _feature_extractor(audio, sampling_rate=sample_rate, return_tensors="pt", padding=True)
+            logger.debug("✅ Used feature_extractor for audio preprocessing")
         else:
             # processor contains feature extractor internally; use it as fallback
             inputs = _processor(audio, sampling_rate=sample_rate, return_tensors="pt", padding=True)
+            logger.debug("✅ Used processor for audio preprocessing")
 
         # Move tensors to device
         inputs = {k: v.to(_DEVICE) for k, v in inputs.items()}
 
         # Forward pass
+        logger.debug(f"🔧 Running model inference on {_DEVICE}")
         outputs = _model(**inputs)
         logits = outputs.logits
         probs = torch.softmax(logits, dim=-1)[0].cpu().numpy()
@@ -146,9 +160,12 @@ def analyze_audio_emotion(audio_array: np.ndarray, sample_rate: int = 16000) -> 
         # Map labels to scores (make them human-friendly)
         scores = { _EMOTION_LABELS[i].lower().replace("_", " "): float(probs[i]) for i in range(len(probs)) }
 
+        logger.info(f"✅ Audio emotion detected: {emotion_label} (confidence: {confidence:.2f})")
+        logger.debug(f"   All scores: {scores}")
+        
         return {"emotion": emotion_label, "confidence": confidence, "scores": scores}
     except Exception as e:
-        logger.warning(f"Error during emotion analysis: {e}. Using fallback.")
+        logger.warning(f"❌ Error during emotion analysis: {e}. Using fallback.", exc_info=True)
         return {
             "emotion": "neutral",
             "confidence": 0.5,
