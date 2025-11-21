@@ -95,6 +95,92 @@ const PostMeetingModal = ({ roomId, onClose }) => {
     }
   };
 
+  const handleDownloadSummary = () => {
+    if (!summary) return;
+
+    // Create formatted text content
+    let content = '='.repeat(60) + '\n';
+    content += 'MEETING SUMMARY\n';
+    content += '='.repeat(60) + '\n\n';
+    
+    if (summary.room_id) {
+      content += `Room ID: ${summary.room_id}\n`;
+    }
+    if (summary.generated_at) {
+      content += `Generated: ${new Date(summary.generated_at).toLocaleString()}\n`;
+    }
+    if (summary.total_participants) {
+      content += `Participants: ${summary.total_participants}\n`;
+    }
+    content += '\n' + '-'.repeat(60) + '\n\n';
+
+    // Add summary content
+    if (typeof summary.summary === 'string') {
+      content += summary.summary + '\n\n';
+    } else {
+      if (summary.summary?.overview) {
+        content += 'OVERVIEW\n';
+        content += '-'.repeat(60) + '\n';
+        content += summary.summary.overview + '\n\n';
+      }
+
+      if (summary.summary?.key_points && summary.summary.key_points.length > 0) {
+        content += 'KEY POINTS\n';
+        content += '-'.repeat(60) + '\n';
+        summary.summary.key_points.forEach((point, idx) => {
+          content += `${idx + 1}. ${point}\n`;
+        });
+        content += '\n';
+      }
+
+      if (summary.summary?.decisions && summary.summary.decisions.length > 0) {
+        content += 'DECISIONS MADE\n';
+        content += '-'.repeat(60) + '\n';
+        summary.summary.decisions.forEach((decision, idx) => {
+          content += `${idx + 1}. ${decision}\n`;
+        });
+        content += '\n';
+      }
+
+      if (summary.summary?.action_items && summary.summary.action_items.length > 0) {
+        content += 'ACTION ITEMS\n';
+        content += '-'.repeat(60) + '\n';
+        summary.summary.action_items.forEach((item, idx) => {
+          content += `${idx + 1}. ${item}\n`;
+        });
+        content += '\n';
+      }
+    }
+
+    // Add tasks if available
+    if (summary.tasks && summary.tasks.length > 0) {
+      content += 'TASKS\n';
+      content += '-'.repeat(60) + '\n';
+      summary.tasks.forEach((task, idx) => {
+        content += `${idx + 1}. ${task.description || task.title || task}\n`;
+        if (task.assignee) content += `   Assignee: ${task.assignee}\n`;
+        if (task.deadline) content += `   Deadline: ${task.deadline}\n`;
+      });
+      content += '\n';
+    }
+
+    content += '='.repeat(60) + '\n';
+    content += 'End of Summary\n';
+    content += '='.repeat(60) + '\n';
+
+    // Create and download file
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `meeting_summary_${roomId}_${Date.now()}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setSuccessMessage('Summary downloaded successfully!');
+  };
+
   const handleGoToDashboard = () => {
     navigate('/');
     onClose();
@@ -241,7 +327,17 @@ const PostMeetingModal = ({ roomId, onClose }) => {
 
             {summary && (
               <div className="summary-section">
-                <h3>Meeting Summary</h3>
+                <div className="summary-header">
+                  <h3>Meeting Summary</h3>
+                  <button 
+                    className="btn-secondary btn-sm"
+                    onClick={handleDownloadSummary}
+                    title="Download Summary"
+                  >
+                    <Download size={16} />
+                    Download
+                  </button>
+                </div>
                 <div className="summary-content">
                   {typeof summary.summary === 'string' ? (
                     <p>{summary.summary}</p>

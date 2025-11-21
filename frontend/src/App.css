@@ -2686,9 +2686,16 @@ body {
   overflow-y: auto;
 }
 
+.summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
 .summary-section h3 {
   color: #f8fafc;
-  margin-bottom: 1rem;
+  margin: 0;
   font-size: 1.1rem;
   display: flex;
   align-items: center;
