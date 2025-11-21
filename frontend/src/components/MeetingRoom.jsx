@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff, MessageSquare,
   FileText, Users, Heart, CheckSquare, FileText as Summary, Monitor, MonitorOff,
-  PanelRightOpen, PanelRightClose, BarChart3, Settings
+  PanelRightOpen, PanelRightClose
 } from 'lucide-react';
 
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -17,8 +17,6 @@ import TranscriptPanel from './Meeting/Transcription';
 import EmotionPanel from './Meeting/EmotionPanel';
 import TaskPanel from './Meeting/TaskPanel';
 import SummaryPanel from './Meeting/SummaryPanel';
-import AnalyticsPanel from './Meeting/AnalyticsPanel';
-import SettingsPanel from './Meeting/SettingsPanel';
 import PostMeetingModal from './Meeting/PostMeetingModal';
 
 const MeetingRoom = ({ userInfo }) => {
@@ -343,14 +341,6 @@ const MeetingRoom = ({ userInfo }) => {
             <button className={`panel-tab ${activeTab === "summary" ? "active" : ""}`} onClick={() => setActiveTab("summary")}>
               <Summary size={18} /> Summary
             </button>
-
-            <button className={`panel-tab ${activeTab === "analytics" ? "active" : ""}`} onClick={() => setActiveTab("analytics")}>
-              <BarChart3 size={18} /> Analytics
-            </button>
-
-            <button className={`panel-tab ${activeTab === "settings" ? "active" : ""}`} onClick={() => setActiveTab("settings")}>
-              <Settings size={18} /> Settings
-            </button>
           </div>
 
           <div className="panel-content">
@@ -359,8 +349,6 @@ const MeetingRoom = ({ userInfo }) => {
             {activeTab === "emotion" && <EmotionPanel currentEmotion={currentEmotion} emotionGuidance={emotionGuidance} emotionHistory={emotionHistory} />}
             {activeTab === "tasks" && <TaskPanel roomId={roomId} currentUser={userInfo} />}
             {activeTab === "summary" && <SummaryPanel roomId={roomId} />}
-            {activeTab === "analytics" && <AnalyticsPanel transcripts={transcripts} participants={participants} emotionHistory={emotionHistory} />}
-            {activeTab === "settings" && <SettingsPanel roomId={roomId} isAudioEnabled={isAudioEnabled} isVideoEnabled={isVideoEnabled} onToggleAudio={toggleAudio} onToggleVideo={toggleVideo} onExportTranscript={handleExportTranscript} onLeaveRoom={handleLeaveRoom} />}
           </div>
         </div>
       </div>
