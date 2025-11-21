@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     MODEL_CACHE_DIR: str = os.getenv("MODEL_CACHE_DIR", "./models_cache")
     API_TIMEOUT_SECONDS: int = int(os.getenv("API_TIMEOUT_SECONDS", "60"))
     USE_STREAMING_TRANSCRIPTION: bool = os.getenv("USE_STREAMING_TRANSCRIPTION", "true").lower() == "true"
+    USE_ROOM_DIARIZATION: bool = os.getenv("USE_ROOM_DIARIZATION", "false").lower() == "true"
 
     # -------------------------------------------------------------------
     # OPENAI RATE LIMITING

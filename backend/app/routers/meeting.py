@@ -31,11 +31,16 @@ from app.services.summary_service import get_summary_service
 from app.services.audio_utils import bytes_to_numpy
 from app.modules.realtime_store import get_transcript_store
 from app.modules.audio_recorder import get_or_create_recorder, get_recorder, delete_recorder
+from app.services.room_diarization_service import get_room_diarization_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/meeting", tags=["Multi-User Meetings"])
 
+# Constants
+DEFAULT_CONFIDENCE_FALLBACK = 0.9  # Default confidence when not available from transcription
+
 _room_audio_buffers = {}  # In-memory buffer for audio chunks per room
+_room_diarization_active = {}  # Track which rooms have diarization active
 
 # Request Models
 class CreateRoomRequest(BaseModel):
@@ -526,6 +531,260 @@ def _generate_srt_transcript(entries) -> str:
     return "\n".join(lines)
 
 
+@router.post("/rooms/{room_id}/diarize")
+async def diarize_meeting_recording(room_id: str):
+    """
+    Perform offline diarization on the saved meeting recording.
+    
+    This endpoint:
+    1. Gets the saved WAV recording from the audio recorder
+    2. Sends it to Deepgram's pre-recorded API with diarization enabled
+    3. Parses speaker labels and timestamps
+    4. Stores results with speaker metadata
+    5. Returns structured JSON with speaker segments
+    
+    Args:
+        room_id: Room identifier
+        
+    Returns:
+        Diarization results with speaker segments and timestamps
+    """
+    try:
+        from app.core.config import settings
+        
+        # Check if Deepgram is available
+        if not settings.DEEPGRAM_API_KEY:
+            raise HTTPException(
+                status_code=503, 
+                detail="Deepgram API key not configured. Set DEEPGRAM_API_KEY environment variable."
+            )
+        
+        # Get the recorder
+        recorder = get_recorder(room_id)
+        if not recorder:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"No recording found for room {room_id}"
+            )
+        
+        # Stop recording if still active
+        if recorder.is_recording:
+            recorder.stop_recording()
+        
+        # Get WAV bytes
+        wav_bytes = recorder.get_wav_bytes()
+        if not wav_bytes or len(wav_bytes) < 100:
+            raise HTTPException(
+                status_code=404, 
+                detail="No audio data available for diarization"
+            )
+        
+        logger.info(f"🎙️ Starting offline diarization for room {room_id}, audio size: {len(wav_bytes)} bytes")
+        
+        # Use Deepgram pre-recorded API with diarization
+        try:
+            from deepgram import DeepgramClient, PrerecordedOptions, FileSource
+            
+            # Initialize Deepgram client
+            deepgram = DeepgramClient(settings.DEEPGRAM_API_KEY)
+            
+            # Prepare audio payload
+            payload: FileSource = {
+                "buffer": wav_bytes,
+            }
+            
+            # Configure options with diarization
+            options = PrerecordedOptions(
+                model="nova-2",
+                smart_format=True,
+                diarize=True,  # Enable speaker diarization
+                punctuate=True,
+                paragraphs=True,
+                utterances=True,
+            )
+            
+            # Make request to Deepgram
+            logger.info(f"📤 Sending audio to Deepgram for diarization...")
+            response = deepgram.listen.rest.v("1").transcribe_file(payload, options)
+            
+            logger.info(f"✅ Received diarization response from Deepgram")
+            
+        except ImportError:
+            raise HTTPException(
+                status_code=503,
+                detail="Deepgram SDK not installed. Run: pip install deepgram-sdk"
+            )
+        except Exception as e:
+            logger.error(f"❌ Deepgram API error: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Deepgram API error: {str(e)}"
+            )
+        
+        # Parse diarization results
+        diarized_segments = []
+        speaker_stats = {}
+        
+        try:
+            # Extract results
+            if hasattr(response, 'results') and response.results:
+                results = response.results
+                
+                # Process utterances (speaker-separated segments)
+                if hasattr(results, 'utterances') and results.utterances:
+                    for utterance in results.utterances:
+                        speaker_id = utterance.speaker if hasattr(utterance, 'speaker') else 0
+                        text = utterance.transcript if hasattr(utterance, 'transcript') else ""
+                        start = utterance.start if hasattr(utterance, 'start') else 0
+                        end = utterance.end if hasattr(utterance, 'end') else 0
+                        confidence = utterance.confidence if hasattr(utterance, 'confidence') else 0
+                        
+                        segment = {
+                            "speaker_id": f"Speaker {speaker_id}",
+                            "text": text,
+                            "start_time": start,
+                            "end_time": end,
+                            "duration": end - start,
+                            "confidence": confidence,
+                            "word_count": len(text.split())
+                        }
+                        
+                        diarized_segments.append(segment)
+                        
+                        # Update speaker stats
+                        speaker_key = f"Speaker {speaker_id}"
+                        if speaker_key not in speaker_stats:
+                            speaker_stats[speaker_key] = {
+                                "total_duration": 0,
+                                "total_words": 0,
+                                "segment_count": 0
+                            }
+                        
+                        speaker_stats[speaker_key]["total_duration"] += (end - start)
+                        speaker_stats[speaker_key]["total_words"] += len(text.split())
+                        speaker_stats[speaker_key]["segment_count"] += 1
+                
+                # If no utterances, fall back to words with speaker labels
+                elif hasattr(results, 'channels') and len(results.channels) > 0:
+                    channel = results.channels[0]
+                    if hasattr(channel, 'alternatives') and len(channel.alternatives) > 0:
+                        alternative = channel.alternatives[0]
+                        
+                        if hasattr(alternative, 'words'):
+                            current_speaker = None
+                            current_text = []
+                            current_start = None
+                            
+                            for word in alternative.words:
+                                word_speaker = word.speaker if hasattr(word, 'speaker') else 0
+                                word_text = word.word if hasattr(word, 'word') else ""
+                                word_start = word.start if hasattr(word, 'start') else 0
+                                word_end = word.end if hasattr(word, 'end') else 0
+                                
+                                # If speaker changed, save previous segment
+                                if current_speaker is not None and word_speaker != current_speaker:
+                                    if current_text:
+                                        segment = {
+                                            "speaker_id": f"Speaker {current_speaker}",
+                                            "text": " ".join(current_text),
+                                            "start_time": current_start,
+                                            "end_time": word_start,
+                                            "duration": word_start - current_start,
+                                            "confidence": DEFAULT_CONFIDENCE_FALLBACK,
+                                            "word_count": len(current_text)
+                                        }
+                                        diarized_segments.append(segment)
+                                        
+                                        # Update stats
+                                        speaker_key = f"Speaker {current_speaker}"
+                                        if speaker_key not in speaker_stats:
+                                            speaker_stats[speaker_key] = {
+                                                "total_duration": 0,
+                                                "total_words": 0,
+                                                "segment_count": 0
+                                            }
+                                        speaker_stats[speaker_key]["total_duration"] += segment["duration"]
+                                        speaker_stats[speaker_key]["total_words"] += len(current_text)
+                                        speaker_stats[speaker_key]["segment_count"] += 1
+                                    
+                                    current_text = []
+                                    current_start = word_start
+                                
+                                current_speaker = word_speaker
+                                current_text.append(word_text)
+                                if current_start is None:
+                                    current_start = word_start
+                            
+                            # Save last segment
+                            if current_text:
+                                segment = {
+                                    "speaker_id": f"Speaker {current_speaker}",
+                                    "text": " ".join(current_text),
+                                    "start_time": current_start,
+                                    "end_time": word_end,
+                                    "duration": word_end - current_start,
+                                    "confidence": DEFAULT_CONFIDENCE_FALLBACK,
+                                    "word_count": len(current_text)
+                                }
+                                diarized_segments.append(segment)
+                                
+                                speaker_key = f"Speaker {current_speaker}"
+                                if speaker_key not in speaker_stats:
+                                    speaker_stats[speaker_key] = {
+                                        "total_duration": 0,
+                                        "total_words": 0,
+                                        "segment_count": 0
+                                    }
+                                speaker_stats[speaker_key]["total_duration"] += segment["duration"]
+                                speaker_stats[speaker_key]["total_words"] += len(current_text)
+                                speaker_stats[speaker_key]["segment_count"] += 1
+            
+        except Exception as e:
+            logger.error(f"❌ Error parsing diarization results: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error parsing diarization results: {str(e)}"
+            )
+        
+        # Store diarization results in transcript store
+        try:
+            store = get_transcript_store()
+            
+            for segment in diarized_segments:
+                await store.add_transcript_entry(
+                    meeting_id=room_id,
+                    speaker=segment["speaker_id"],
+                    text=segment["text"],
+                    confidence=segment["confidence"]
+                )
+            
+            logger.info(f"✅ Stored {len(diarized_segments)} diarized segments for room {room_id}")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to store diarization results: {e}")
+        
+        # Return results
+        return {
+            "room_id": room_id,
+            "diarization_complete": True,
+            "segments": diarized_segments,
+            "speaker_count": len(speaker_stats),
+            "speaker_stats": speaker_stats,
+            "total_segments": len(diarized_segments),
+            "total_duration": sum(s["duration"] for s in diarized_segments),
+            "generated_at": datetime.utcnow().isoformat()
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error in offline diarization: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Offline diarization error: {str(e)}"
+        )
+
+
 # Test endpoint for WebSocket broadcast verification
 @router.post("/rooms/{room_id}/test-broadcast")
 async def test_broadcast(room_id: str):
@@ -634,12 +893,131 @@ async def meeting_websocket(
 
         logger.info(f"✅ {username} joined {room_id} as {participant.role.value}")
 
-        # Initialize Deepgram stream if streaming mode is enabled
-        # Initialize Deepgram stream if streaming mode is enabled
+        # Check if we should use room-level diarization or per-user streaming
+        from app.core.config import settings
+        use_room_diarization = settings.USE_ROOM_DIARIZATION
+        
+        # Initialize streaming transcription
         orchestrator = get_orchestrator_service()
-        if orchestrator.use_streaming and orchestrator.deepgram_service:
+        
+        if use_room_diarization and orchestrator.use_streaming:
+            # Room-level diarization mode (mixed stream with speaker identification)
+            logger.info(f"🎙️ Using room-level diarization for {room_id}")
+            
+            # Get or create room diarization service
+            room_diarization = get_room_diarization_service(settings.DEEPGRAM_API_KEY)
+            
+            if room_diarization:
+                # Register participant for speaker mapping
+                room_diarization.register_participant(room_id, user_id, username)
+                
+                # Start room diarization if not already active
+                if room_id not in _room_diarization_active:
+                    logger.info(f"🎤 Starting room-level diarization for {room_id}")
+                    
+                    # Capture variables for callback
+                    current_room_id = room_id
+                    
+                    async def on_room_transcript(result: dict):
+                        """Handle transcript results from room-level Deepgram streaming"""
+                        try:
+                            text = result.get('text', '').strip()
+                            if not text:
+                                return
+                            
+                            is_final = result.get('is_final', True)
+                            confidence = result.get('confidence', 1.0)
+                            deepgram_speaker = result.get('speaker')  # Deepgram speaker ID
+                            
+                            logger.info(f"📝 Room transcript: '{text[:50]}...' (speaker: {deepgram_speaker}, final: {is_final})")
+                            
+                            # Skip partial results
+                            if not is_final:
+                                return
+                            
+                            # Try to resolve speaker to participant
+                            participant_id = room_diarization.resolve_speaker(current_room_id, deepgram_speaker)
+                            
+                            if not participant_id:
+                                # Unknown speaker - uses Deepgram's speaker ID as fallback
+                                # Speaker mapping could be enhanced with voice profile matching
+                                participant_id = f"speaker_{deepgram_speaker}" if deepgram_speaker is not None else "unknown"
+                                display_name = f"Speaker {deepgram_speaker}" if deepgram_speaker is not None else "Unknown"
+                            else:
+                                display_name = room_diarization.get_participant_name(current_room_id, participant_id)
+                            
+                            logger.info(f"👤 Resolved speaker: {deepgram_speaker} -> {participant_id} ({display_name})")
+                            
+                            # Emotion analysis (simplified for room-level)
+                            emotion = {"emotion": "neutral", "confidence": 0, "scores": {}}
+                            
+                            # Get emotion guidance
+                            guidance = {}
+                            try:
+                                guidance_engine = get_emotion_guidance_engine()
+                                guidance = await asyncio.wait_for(
+                                    asyncio.to_thread(
+                                        guidance_engine.get_guidance,
+                                        emotion["emotion"], text, emotion.get("confidence", 0),
+                                        context={"username": display_name, "room_id": current_room_id, "speaker": participant_id}
+                                    ),
+                                    timeout=2.0
+                                )
+                            except Exception as e:
+                                logger.warning(f"⚠️ Guidance generation failed: {e}")
+                            
+                            # Broadcast transcript
+                            await room_manager.broadcast_transcript(
+                                room_id=current_room_id,
+                                user_id=participant_id,
+                                username=display_name,
+                                text=text,
+                                emotion=emotion["emotion"],
+                                confidence=emotion.get("confidence", 0),
+                                emotion_guidance=guidance
+                            )
+                            
+                            # Store transcript
+                            store = get_transcript_store()
+                            entry_obj = await store.add_transcript_entry(
+                                meeting_id=current_room_id,
+                                speaker=participant_id,
+                                text=text,
+                                confidence=confidence
+                            )
+                            
+                            if entry_obj:
+                                entry_obj.emotions = {
+                                    "emotion": emotion["emotion"],
+                                    "confidence": emotion.get("confidence", 0),
+                                    "scores": emotion.get("scores", {})
+                                }
+                            
+                            logger.info(f"✅ Room transcript processed: '{text[:60]}' | Speaker: {display_name}")
+                            
+                        except Exception as e:
+                            logger.error(f"❌ Error processing room transcript: {e}", exc_info=True)
+                    
+                    # Start room-level diarization
+                    success = await room_diarization.start_room_diarization(
+                        room_id=room_id,
+                        on_transcript=on_room_transcript,
+                        language="en",
+                        model="nova-2"
+                    )
+                    
+                    if success:
+                        _room_diarization_active[room_id] = True
+                        logger.info(f"✅ Room diarization started for {room_id}")
+                    else:
+                        logger.warning(f"⚠️ Failed to start room diarization for {room_id}")
+                else:
+                    logger.info(f"✅ Room diarization already active for {room_id}")
+        
+        elif orchestrator.use_streaming and orchestrator.deepgram_service:
+            # Per-user streaming mode (original implementation)
             stream_id = f"{room_id}_{user_id}"
-            logger.info(f"🎙️ Initializing Deepgram stream for {username} (stream: {stream_id})")
+            logger.info(f"🎙️ Initializing per-user Deepgram stream for {username} (stream: {stream_id})")
             
             # Initialize audio buffer for this user's stream
             if stream_id not in _room_audio_buffers:
@@ -965,6 +1343,25 @@ async def meeting_websocket(
         except Exception as dg_err:
             logger.debug(f"Error stopping Deepgram stream: {dg_err}")
         
+        # Clean up room diarization if this is the last participant
+        try:
+            from app.core.config import settings
+            if settings.USE_ROOM_DIARIZATION and room_id in _room_diarization_active:
+                room_diarization = get_room_diarization_service()
+                if room_diarization:
+                    # Unregister participant
+                    room_diarization.unregister_participant(room_id, user_id)
+                    
+                    # Check if room is empty
+                    room = room_manager.rooms.get(room_id)
+                    if not room or len(room.participants) <= 1:  # <= 1 because we haven't removed this user yet
+                        await room_diarization.stop_room_diarization(room_id)
+                        if room_id in _room_diarization_active:
+                            del _room_diarization_active[room_id]
+                        logger.info(f"🔌 Stopped room diarization for {room_id}")
+        except Exception as diar_err:
+            logger.debug(f"Error stopping room diarization: {diar_err}")
+        
         # ✅ FIX: Only call leave_room once in finally block to avoid multiple calls
         try:
             await room_manager.leave_room(room_id, user_id)
@@ -1027,6 +1424,19 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
                 logger.debug(f"📼 Audio added to recorder for room {room_id}")
         except Exception as rec_err:
             logger.warning(f"⚠️ Failed to add audio to recorder for room {room_id}: {rec_err}")
+        
+        # 2.6️⃣ Add audio to room diarization if active
+        from app.core.config import settings
+        if settings.USE_ROOM_DIARIZATION and room_id in _room_diarization_active:
+            try:
+                room_diarization = get_room_diarization_service()
+                if room_diarization:
+                    # Convert bytes to numpy array for mixing
+                    audio_array, _ = bytes_to_numpy(audio_bytes, sample_rate=16000)
+                    await room_diarization.add_audio_chunk(room_id, user_id, audio_array)
+                    logger.debug(f"🎤 Audio added to room diarization for {username}")
+            except Exception as diar_err:
+                logger.warning(f"⚠️ Failed to add audio to room diarization: {diar_err}")
 
         # 3️⃣ Run unified AI pipeline via orchestrator
         stream_id = f"{room_id}_{user_id}"

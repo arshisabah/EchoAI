@@ -14,6 +14,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
+# Constants
+CONNECTION_READY_TIMEOUT = 5.0  # Seconds to wait for connection to be ready
+SEND_AUDIO_READY_TIMEOUT = 2.0  # Seconds to wait for ready state when sending audio
+
 try:
     from deepgram import (
         DeepgramClient,
@@ -52,6 +56,7 @@ class DeepgramStreamingService:
         self.loops: Dict[str, Any] = {}  # session_id -> event loop
         self.executor = ThreadPoolExecutor(max_workers=4)
         self.keepalive_tasks: Dict[str, Any] = {}  # session_id -> keepalive task
+        self.connection_ready: Dict[str, asyncio.Event] = {}  # session_id -> ready event
         
         logger.info("✅ DeepgramStreamingService initialized")
     
@@ -90,6 +95,9 @@ class DeepgramStreamingService:
             except RuntimeError:
                 self.loops[session_id] = asyncio.get_event_loop()
             
+            # Create ready event for this session
+            self.connection_ready[session_id] = asyncio.Event()
+            
             # Initialize Deepgram client
             if not self.client:
                 self.client = DeepgramClient(self.api_key)
@@ -104,6 +112,11 @@ class DeepgramStreamingService:
                 """Handle connection open"""
                 logger.info(f"🔌 Deepgram connection opened for {session_id}: {open_msg}")
                 logger.info(f" open msg: {open_msg}")
+                # Mark connection as ready
+                ready_event = self.connection_ready.get(session_id)
+                if ready_event:
+                    ready_event.set()
+                    logger.info(f"✅ Connection marked as ready for {session_id}")
             
             # Set up event handlers
             def on_message(self_inner, result, **kwargs):
@@ -199,6 +212,8 @@ class DeepgramStreamingService:
                     del self.callbacks[session_id]
                 if session_id in self.loops:
                     del self.loops[session_id]
+                if session_id in self.connection_ready:
+                    del self.connection_ready[session_id]
                 # Cancel keepalive
                 if session_id in self.keepalive_tasks:
                     keepalive_task = self.keepalive_tasks[session_id]
@@ -233,6 +248,22 @@ class DeepgramStreamingService:
             # Store connection
             self.connections[session_id] = dg_connection
             
+            # Wait for connection to be ready (with timeout)
+            try:
+                await asyncio.wait_for(
+                    self.connection_ready[session_id].wait(), 
+                    timeout=CONNECTION_READY_TIMEOUT
+                )
+                logger.info(f"✅ Connection ready for {session_id}")
+            except asyncio.TimeoutError:
+                logger.error(f"❌ Connection ready timeout for {session_id}")
+                # Clean up
+                if session_id in self.connections:
+                    del self.connections[session_id]
+                if session_id in self.connection_ready:
+                    del self.connection_ready[session_id]
+                return False
+            
             # Start keepalive task
             loop = self.loops.get(session_id)
             if loop:
@@ -263,6 +294,19 @@ class DeepgramStreamingService:
             if not connection:
                 logger.warning(f"⚠️ No active connection for session {session_id}")
                 return False
+            
+            # Verify connection is ready before sending
+            ready_event = self.connection_ready.get(session_id)
+            if ready_event and not ready_event.is_set():
+                logger.warning(f"⚠️ Connection not ready for session {session_id}, waiting...")
+                try:
+                    await asyncio.wait_for(
+                        ready_event.wait(), 
+                        timeout=SEND_AUDIO_READY_TIMEOUT
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"❌ Connection ready timeout while sending audio for {session_id}")
+                    return False
             
             # Send audio to Deepgram
             connection.send(audio_data)
@@ -298,6 +342,8 @@ class DeepgramStreamingService:
                 del self.callbacks[session_id]
             if session_id in self.loops:
                 del self.loops[session_id]
+            if session_id in self.connection_ready:
+                del self.connection_ready[session_id]
 
             # Cancel keepalive task
             if session_id in self.keepalive_tasks:
