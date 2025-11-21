@@ -51,6 +51,7 @@ class DeepgramStreamingService:
         self.callbacks: Dict[str, Callable] = {}  # session_id -> callback
         self.loops: Dict[str, Any] = {}  # session_id -> event loop
         self.executor = ThreadPoolExecutor(max_workers=4)
+        self.keepalive_tasks: Dict[str, Any] = {}  # session_id -> keepalive task
         
         logger.info("✅ DeepgramStreamingService initialized")
     
@@ -171,7 +172,24 @@ class DeepgramStreamingService:
             def on_error(self_inner, error, **kwargs):
                 """Handle errors"""
                 logger.error(f"❌ Deepgram error for {session_id}: {error}")
-            
+                
+                # Check if it's a timeout error
+                error_str = str(error) if error else ""
+                if "timeout" in error_str.lower() or "1011" in error_str:
+                    logger.warning(f"⚠️ Deepgram timeout detected for {session_id}, attempting reconnect...")
+                    # Schedule reconnection
+                    try:
+                        loop = self.loops.get(session_id)
+                        callback = self.callbacks.get(session_id)
+                        if loop and callback:
+                            # Reconnect in 1 second
+                            asyncio.run_coroutine_threadsafe(
+                                self._reconnect_stream(session_id, callback),
+                                loop
+                            )
+                    except Exception as e:
+                        logger.error(f"❌ Failed to schedule reconnect: {e}")
+                        
             def on_close(self_inner, close_msg, **kwargs):
                 """Handle connection close"""
                 logger.info(f"🔌 Deepgram connection closed for {session_id}")
@@ -181,6 +199,11 @@ class DeepgramStreamingService:
                     del self.callbacks[session_id]
                 if session_id in self.loops:
                     del self.loops[session_id]
+                # Cancel keepalive
+                if session_id in self.keepalive_tasks:
+                    keepalive_task = self.keepalive_tasks[session_id]
+                    keepalive_task.cancel()
+                    del self.keepalive_tasks[session_id]
             
             # Register event handlers
             dg_connection.on(LiveTranscriptionEvents.Open, on_open) 
@@ -210,6 +233,13 @@ class DeepgramStreamingService:
             # Store connection
             self.connections[session_id] = dg_connection
             
+            # Start keepalive task
+            loop = self.loops.get(session_id)
+            if loop:
+                keepalive_task = asyncio.create_task(self._keepalive_loop(session_id))
+                self.keepalive_tasks[session_id] = keepalive_task
+                logger.info(f"💓 Started keepalive task for {session_id}")
+
             logger.info(f"✅ Started Deepgram stream for session {session_id}")
             return True
             
@@ -268,6 +298,13 @@ class DeepgramStreamingService:
                 del self.callbacks[session_id]
             if session_id in self.loops:
                 del self.loops[session_id]
+
+            # Cancel keepalive task
+            if session_id in self.keepalive_tasks:
+                keepalive_task = self.keepalive_tasks[session_id]
+                keepalive_task.cancel()
+                del self.keepalive_tasks[session_id]
+                logger.debug(f"💓 Stopped keepalive task for {session_id}")
             
             logger.info(f"✅ Stopped Deepgram stream for session {session_id}")
             return True
@@ -290,6 +327,62 @@ class DeepgramStreamingService:
                 )
         except Exception as e:
             logger.error(f"❌ Error in transcript callback: {e}", exc_info=True)
+
+    async def _keepalive_loop(self, session_id: str):
+        """Send keepalive messages every 5 seconds to maintain Deepgram connection."""
+        try:
+            while session_id in self.connections:
+                await asyncio.sleep(5)  # Send keepalive every 5 seconds
+                
+                connection = self.connections.get(session_id)
+                if connection:
+                    try:
+                        # Send a keepalive message (empty audio frame or KeepAlive message)
+                        connection.keep_alive()
+                        logger.debug(f"💓 Sent keepalive for {session_id}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Keepalive failed for {session_id}: {e}")
+                        break
+        except asyncio.CancelledError:
+            logger.debug(f"Keepalive task cancelled for {session_id}")
+        except Exception as e:
+            logger.error(f"❌ Keepalive loop error for {session_id}: {e}")
+
+    async def _reconnect_stream(self, session_id: str, on_transcript: Callable):
+        """Reconnect Deepgram stream after timeout."""
+        try:
+            await asyncio.sleep(1)  # Brief delay before reconnect
+            
+            # Check if still needed
+            if session_id not in self.loops:
+                return
+            
+            logger.info(f"🔄 Reconnecting Deepgram stream for {session_id}")
+            
+            # Clean up old connection
+            if session_id in self.connections:
+                try:
+                    old_conn = self.connections[session_id]
+                    old_conn.finish()
+                except:
+                    pass
+                del self.connections[session_id]
+            
+            # Restart stream with same callback
+            await self.start_stream(
+                session_id=session_id,
+                on_transcript=on_transcript,
+                language="en",
+                model="nova-2",
+                smart_format=True,
+                interim_results=True,
+                diarize=False
+            )
+            
+            logger.info(f"✅ Reconnected Deepgram stream for {session_id}")
+            
+        except Exception as e:
+            logger.error(f"❌ Reconnection failed for {session_id}: {e}")
     
     async def cleanup(self):
         """Clean up all active connections"""
