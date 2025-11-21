@@ -177,25 +177,32 @@ const MeetingRoom = ({ userInfo }) => {
 
     const latest = transcripts[0];
     
-    console.log("🎭 Emotion update check:", {
-      hasEmotion: !!latest.emotion,
-      emotion: latest.emotion,
-      hasGuidance: !!latest.emotion_guidance,
-      guidance: latest.emotion_guidance
-    });
+    // Debug logging (only in development)
+    if (import.meta.env.DEV) {
+      console.log("🎭 Emotion update check:", {
+        hasEmotion: !!latest.emotion,
+        emotion: latest.emotion,
+        hasGuidance: !!latest.emotion_guidance,
+        guidance: latest.emotion_guidance
+      });
+    }
 
     if (latest.emotion) {
-      console.log(`✅ Setting emotion to: ${latest.emotion}`);
+      if (import.meta.env.DEV) {
+        console.log(`✅ Setting emotion to: ${latest.emotion}`);
+      }
       setCurrentEmotion(latest.emotion);
       setEmotionHistory((prev) => [...prev, latest.emotion].slice(-10));
-    } else {
+    } else if (import.meta.env.DEV) {
       console.warn("⚠️ Latest transcript has no emotion field");
     }
 
     if (latest.emotion_guidance) {
-      console.log("✅ Setting emotion guidance:", latest.emotion_guidance);
+      if (import.meta.env.DEV) {
+        console.log("✅ Setting emotion guidance:", latest.emotion_guidance);
+      }
       setEmotionGuidance(latest.emotion_guidance);
-    } else {
+    } else if (import.meta.env.DEV) {
       console.warn("⚠️ Latest transcript has no emotion_guidance field");
     }
   }, [transcripts]);

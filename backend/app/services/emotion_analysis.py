@@ -5,6 +5,7 @@ Emotion Analysis Service for EchoAI - Uses OpenAI GPT-4o-mini.
 
 import logging
 import uuid
+import re  # For word boundary matching in keyword fallback
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 import json
@@ -166,12 +167,10 @@ class EmotionService:
         """
         Enhanced keyword-based fallback with expanded vocabulary.
         This is used when OpenAI is unavailable or returns invalid results.
+        Uses word boundary matching to prevent false positives.
         """
         logger.info(f"🔄 Using keyword-based fallback analysis for: '{text[:50]}...'")
         text_lower = text.lower()
-        
-        # Use word boundaries to avoid false positives (e.g., 'happy' in 'unhappy')
-        import re
         
         # Expanded emotion keywords with stronger patterns
         emotion_keywords = {
