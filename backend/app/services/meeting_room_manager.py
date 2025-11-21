@@ -276,56 +276,62 @@ class MeetingRoomManager:
     
     async def leave_room(self, room_id: str, user_id: str):
         """Remove a participant from a room."""
-        async with self._lock:
-            room = self.rooms.get(room_id)
-            
-            if not room:
-                return
-            
-            participant = room.participants.pop(user_id, None)
-            
-            if participant:
-                participant.last_activity = datetime.utcnow()
+        try:
+            async with self._lock:
+                room = self.rooms.get(room_id)
+                
+                if not room:
+                    return
+                
+                participant = room.participants.pop(user_id, None)
+                
+                if participant:
+                    participant.last_activity = datetime.utcnow()
 
-            if participant:
-                logger.info(f"User {participant.username} left room {room_id}")
-                
-                # ✅ Broadcast updated leave event BEFORE closing WebSocket
-                # This ensures other participants get notified properly
-                await self.broadcast_to_room(room_id, {
-                    "type": "participant_left",
-                    "user_id": user_id,
-                    "username": participant.username,
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "participant_count": len(room.participants),
-                    "participants": [p.to_dict() for p in room.participants.values()],
-                    "room_status": room.status.value
-                })
-                
-                # ✅ FIX: Add small delay to allow in-flight broadcasts to complete
-                # This prevents premature closure during active transcription
-                await asyncio.sleep(0.1)
-                
-                # ✅ Close the participant's WebSocket connection
-                try:
-                    # Only close if still connected
-                    if participant.websocket.client_state == WebSocketState.CONNECTED:
-                        await participant.websocket.close()
-                        logger.info(f"Closed WebSocket for {participant.username} ({user_id})")
-                except Exception as e:
-                    logger.warning(f"Error closing WebSocket for {user_id}: {e}")
-                
-                # ✅ End room if empty
-            if len(room.participants) == 0:
-                room.status = MeetingStatus.ENDED
-                logger.info(f"Room {room_id} ended (empty)")
-                
-                # Notify frontend that room ended
-                await self.broadcast_to_room(room_id, {
-                    "type": "room_ended",
-                    "room_id": room_id,
-                    "timestamp": datetime.utcnow().isoformat()
-                })
+                if participant:
+                    logger.info(f"User {participant.username} left room {room_id}")
+                    
+                    # ✅ Broadcast updated leave event BEFORE closing WebSocket
+                    # This ensures other participants get notified properly
+                    await self.broadcast_to_room(room_id, {
+                        "type": "participant_left",
+                        "user_id": user_id,
+                        "username": participant.username,
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "participant_count": len(room.participants),
+                        "participants": [p.to_dict() for p in room.participants.values()],
+                        "room_status": room.status.value
+                    })
+                    
+                    # ✅ FIX: Add small delay to allow in-flight broadcasts to complete
+                    # This prevents premature closure during active transcription
+                    await asyncio.sleep(0.1)
+                    
+                    # ✅ Close the participant's WebSocket connection
+                    try:
+                        # Only close if still connected
+                        if participant.websocket.client_state == WebSocketState.CONNECTED:
+                            await participant.websocket.close()
+                            logger.info(f"Closed WebSocket for {participant.username} ({user_id})")
+                    except Exception as e:
+                        logger.warning(f"Error closing WebSocket for {user_id}: {e}")
+                    
+                    # ✅ End room if empty
+                if len(room.participants) == 0:
+                    room.status = MeetingStatus.ENDED
+                    logger.info(f"Room {room_id} ended (empty)")
+                    
+                    # Notify frontend that room ended
+                    await self.broadcast_to_room(room_id, {
+                        "type": "room_ended",
+                        "room_id": room_id,
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
+        except asyncio.CancelledError:
+            logger.debug(f"Leave room cancelled for {user_id} (shutdown)")
+            return
+        except Exception as e:
+            logger.error(f"Error in leave_room: {e}", exc_info=True)
     
     async def broadcast_to_room(
         self,
