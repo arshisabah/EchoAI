@@ -983,7 +983,7 @@ async def meeting_websocket(
                                         emotion["emotion"], text, emotion.get("confidence", 0),
                                         context={"username": display_name, "room_id": current_room_id, "speaker": participant_id}
                                     ),
-                                    timeout=2.0
+                                    timeout=1.0  # 1 second timeout (reduced from 2s for faster response)
                                 )
                             except Exception as e:
                                 logger.warning(f"⚠️ Guidance generation failed: {e}")
@@ -1110,7 +1110,7 @@ async def meeting_websocket(
                                 emotion["emotion"], text, emotion.get("confidence", 0),
                                 context={"username": current_username, "room_id": current_room_id, "speaker": current_user_id}
                             ),
-                            timeout=2.0  # 2 second timeout to prevent OpenAI delays
+                            timeout=1.0  # 1 second timeout (reduced from 2s for faster response)
                         )
                         logger.debug(f"✅ Got emotion guidance for {current_username}")
                     except asyncio.TimeoutError:
@@ -1154,28 +1154,28 @@ async def meeting_websocket(
             
             logger.info(f"🎙️ About to start Deepgram stream for {username} (stream: {stream_id})")
 
-        try:
-            success = await orchestrator.deepgram_service.start_stream(
-                session_id=stream_id,
-                on_transcript=on_deepgram_transcript,
-                language="en",
-                model="nova-2",
-                smart_format=True,
-                interim_results=True,
-                diarize=False  # We're using user_id instead
-            )
-            
-            logger.info(f"🔧 start_stream() returned: {success} for {username}")
-            
-            if success:
-                logger.info(f"✅ Deepgram stream started for {username} (stream: {stream_id})")
-                logger.info(f"🔍 Active connections: {list(orchestrator.deepgram_service.connections.keys())}")
-            else:
-                logger.error(f"❌ Failed to start Deepgram stream for {username}, falling back to legacy mode")
+            try:
+                success = await orchestrator.deepgram_service.start_stream(
+                    session_id=stream_id,
+                    on_transcript=on_deepgram_transcript,
+                    language="en",
+                    model="nova-2",
+                    smart_format=True,
+                    interim_results=True,
+                    diarize=False  # We're using user_id instead
+                )
                 
-        except Exception as e:
-            logger.error(f"❌ Exception starting Deepgram stream for {username}: {e}", exc_info=True)
-            success = False
+                logger.info(f"🔧 start_stream() returned: {success} for {username}")
+                
+                if success:
+                    logger.info(f"✅ Deepgram stream started for {username} (stream: {stream_id})")
+                    logger.info(f"🔍 Active connections: {list(orchestrator.deepgram_service.connections.keys())}")
+                else:
+                    logger.error(f"❌ Failed to start Deepgram stream for {username}, falling back to legacy mode")
+                    
+            except Exception as e:
+                logger.error(f"❌ Exception starting Deepgram stream for {username}: {e}", exc_info=True)
+                success = False
                 
         # Start recording if this is the first participant
         recorder = get_or_create_recorder(room_id)
@@ -1271,7 +1271,7 @@ async def meeting_websocket(
                         await safe_send(websocket, transcript_message, "historical_transcript")
                     
                     # Small delay between batches to prevent overwhelming the connection
-                    await asyncio.sleep(0.05)
+                    await asyncio.sleep(0.02)  # 20ms delay (reduced from 50ms for faster loading)
                 
                 logger.info(f"✅ Historical transcripts sent to {username}")
         except Exception as e:
@@ -1324,7 +1324,19 @@ async def meeting_websocket(
             # WebRTC signaling routing: target_id must be present and will be forwarded
             elif message_type in {"webrtc_offer", "webrtc_answer", "ice_candidate"}:
                 target_id = message.get("target_id")
+                
+                # ✅ ADD: Validate message structure
+                if message_type == "webrtc_answer":
+                    if "sdp" not in message:
+                        logger.error(f"❌ Invalid WebRTC answer from {user_id} - missing SDP")
+                        await safe_send(websocket, {
+                            "type": "error",
+                            "message": "Invalid WebRTC answer - missing SDP"
+                        }, "webrtc_error")
+                        continue
+                
                 logger.info(f"📡 WebRTC signaling: {message_type} from {username} ({user_id}) to {target_id} in room {room_id}")
+                logger.debug(f"   Full WebRTC message: {json.dumps(message, default=str)}")
                 
                 if target_id and room_id in room_manager.rooms:
                     room = room_manager.rooms[room_id]

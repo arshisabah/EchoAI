@@ -8,7 +8,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
  * - onAudioData(Uint8Array) callback
  */
 
-const CHUNK_MS = 500; // send ~500ms of audio per chunk
+const CHUNK_MS = 250; // send ~250ms of audio per chunk (reduced from 500ms for faster response)
 const VAD_RMS_THRESHOLD = 0.0012; // adjust if you have noisy mic or quiet voice
 const INPUT_BUFFER_SIZE = 4096; // script processor buffer
 
