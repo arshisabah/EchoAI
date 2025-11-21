@@ -198,8 +198,20 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
           return;
         }
 
-        await pc.setRemoteDescription({ type: "offer", sdp });
-        console.log(`✅ Set remote description (offer) for peer ${from}`);
+        // ✅ CHECK STATE BEFORE SETTING OFFER
+        if (pc.signalingState === 'stable' || pc.signalingState === 'have-local-offer') {
+          try {
+            await pc.setRemoteDescription({ type: "offer", sdp });
+            console.log(`✅ Set remote description (offer) for peer ${from}`);
+          } catch (error) {
+            console.error(`❌ Failed to set remote offer from ${from}:`, error);
+            console.error(`   Current state: ${pc.signalingState}`);
+            return;
+          }
+        } else {
+          console.warn(`⚠️ Cannot set remote offer from ${from} - wrong state: ${pc.signalingState}`);
+          return;
+        }
 
         // ensure local tracks are attached before creating answer
         const local = localStreamRef.current || WebRTCService.localStream;
@@ -232,8 +244,18 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
         console.log(`📨 Received WebRTC answer from ${from}`);
         const pc = peerConnectionsRef.current.get(from);
         if (pc && sdp) {
-          await pc.setRemoteDescription({ type: "answer", sdp });
-          console.log(`✅ Set remote description (answer) for peer ${from}`);
+          // ✅ CHECK STATE BEFORE SETTING ANSWER
+          if (pc.signalingState === 'have-local-offer') {
+            try {
+              await pc.setRemoteDescription({ type: "answer", sdp });
+              console.log(`✅ Set remote description (answer) for peer ${from}`);
+            } catch (error) {
+              console.error(`❌ Failed to set remote answer from ${from}:`, error);
+              console.error(`   Current state: ${pc.signalingState}`);
+            }
+          } else {
+            console.warn(`⚠️ Ignoring answer from ${from} - wrong state: ${pc.signalingState}`);
+          }
         } else {
           console.error(`❌ No peer connection found for ${from} or missing SDP`);
         }
