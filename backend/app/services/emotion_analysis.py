@@ -170,6 +170,9 @@ class EmotionService:
         logger.info(f"🔄 Using keyword-based fallback analysis for: '{text[:50]}...'")
         text_lower = text.lower()
         
+        # Use word boundaries to avoid false positives (e.g., 'happy' in 'unhappy')
+        import re
+        
         # Expanded emotion keywords with stronger patterns
         emotion_keywords = {
             "happy": {
@@ -179,7 +182,7 @@ class EmotionService:
                 "weight": 0.7
             },
             "sad": {
-                "keywords": ["sad", "down", "depressed", "unhappy", "miserable", "gloomy", 
+                "keywords": ["sad", "down", "depressed", "miserable", "gloomy", 
                            "disappointed", "heartbroken", "sorrowful", "melancholy", "unfortunate",
                            "terrible", "awful", "bad news", "sorry to hear"],
                 "weight": 0.7
@@ -220,7 +223,7 @@ class EmotionService:
             },
             "surprised": {
                 "keywords": ["surprised", "shocking", "wow", "unexpected", "didn't expect",
-                           "can't believe", "amazing", "unbelievable", "astonishing"],
+                           "can't believe", "unbelievable", "astonishing"],
                 "weight": 0.6
             },
             "bored": {
@@ -239,12 +242,24 @@ class EmotionService:
         max_confidence = 0.3
         matched_keywords = []
         
-        # Check for emotion keywords
+        # Check for emotion keywords with word boundaries
         for emotion, config in emotion_keywords.items():
             keywords = config["keywords"]
             base_weight = config["weight"]
             
-            matches = [kw for kw in keywords if kw in text_lower]
+            matches = []
+            for kw in keywords:
+                # Use word boundaries for single words, phrase matching for multi-word keywords
+                if ' ' in kw:
+                    # Multi-word phrase - check for exact substring match
+                    if kw in text_lower:
+                        matches.append(kw)
+                else:
+                    # Single word - use word boundary regex to avoid false positives
+                    pattern = r'\b' + re.escape(kw) + r'\b'
+                    if re.search(pattern, text_lower):
+                        matches.append(kw)
+            
             if matches:
                 # Calculate confidence based on number and strength of matches
                 match_count = len(matches)

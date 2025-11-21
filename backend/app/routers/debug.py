@@ -14,6 +14,9 @@ from app.modules.audio_emotion_analyzer import analyze_audio_emotion, _MODEL_AVA
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/debug", tags=["Debug"])
 
+# Configuration constants
+OPENAI_CONFIDENCE_THRESHOLD = 0.5  # Threshold to determine if OpenAI was used vs fallback
+
 
 class TestEmotionRequest(BaseModel):
     """Request model for emotion testing."""
@@ -69,7 +72,7 @@ async def test_emotion_detection(request: TestEmotionRequest):
                 "emotion": text_emotion.get("emotion", "unknown"),
                 "confidence": text_emotion.get("confidence", 0.0),
                 "scores": text_emotion.get("scores", {}),
-                "source": "openai_gpt4o_mini" if text_emotion.get("confidence", 0) > 0.5 else "keyword_fallback"
+                "source": "openai_gpt4o_mini" if text_emotion.get("confidence", 0) > OPENAI_CONFIDENCE_THRESHOLD else "keyword_fallback"
             },
             "audio_model_available": audio_available,
             "combined_emotion": None
