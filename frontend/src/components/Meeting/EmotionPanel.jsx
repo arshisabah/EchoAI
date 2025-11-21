@@ -14,6 +14,15 @@ const EMOTION_CONFIG = {
 
 const EmotionPanel = ({ currentEmotion, emotionGuidance, emotionHistory }) => {
   const config = EMOTION_CONFIG[currentEmotion] || EMOTION_CONFIG.neutral;
+  
+  // Debug logging
+  React.useEffect(() => {
+    console.log("🎭 EmotionPanel updated:", {
+      currentEmotion,
+      hasGuidance: !!emotionGuidance,
+      historyLength: emotionHistory?.length || 0
+    });
+  }, [currentEmotion, emotionGuidance, emotionHistory]);
 
   return (
     <div className="emotion-panel">
