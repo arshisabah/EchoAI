@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff, MessageSquare,
   FileText, Users, Heart, CheckSquare, FileText as Summary, Monitor, MonitorOff,
-  PanelRightOpen, PanelRightClose
+  PanelRightOpen, PanelRightClose, Maximize2, Minimize2, Maximize
 } from 'lucide-react';
 
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -37,11 +37,80 @@ const MeetingRoom = ({ userInfo }) => {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [showPostMeetingModal, setShowPostMeetingModal] = useState(false);
   const [isSidePanelOpen, setIsSidePanelOpen] = useState(true);
+  const [isServerReady, setIsServerReady] = useState(false);
+  const [panelWidth, setPanelWidth] = useState(400);
+  const [isResizing, setIsResizing] = useState(false);
+  const [isPanelMaximized, setIsPanelMaximized] = useState(false);
+  const [isRoomFullscreen, setIsRoomFullscreen] = useState(false);
+  const resizeRef = useRef(null);
+  const meetingRoomRef = useRef(null);
 
   // ✅ FIX: Use ref to always have latest connection state
   const isTranscriptConnectedRef = useRef(false);
+  const isServerReadyRef = useRef(false);
 
   console.log("MeetingRoom Loaded → roomId:", roomId, "password:", roomPassword);
+
+  // Panel resize handlers
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isResizing) return;
+      const newWidth = window.innerWidth - e.clientX;
+      setPanelWidth(Math.max(300, Math.min(newWidth, window.innerWidth - 400)));
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    if (isResizing) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = 'ew-resize';
+      document.body.style.userSelect = 'none';
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizing]);
+
+  const handleResizeStart = () => {
+    setIsResizing(true);
+  };
+
+  const togglePanelMaximize = () => {
+    setIsPanelMaximized(!isPanelMaximized);
+  };
+
+  const toggleRoomFullscreen = async () => {
+    if (!meetingRoomRef.current) return;
+
+    try {
+      if (!document.fullscreenElement) {
+        await meetingRoomRef.current.requestFullscreen();
+        setIsRoomFullscreen(true);
+      } else {
+        await document.exitFullscreen();
+        setIsRoomFullscreen(false);
+      }
+    } catch (error) {
+      console.error('Fullscreen error:', error);
+    }
+  };
+
+  // Listen for fullscreen changes (e.g., ESC key)
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsRoomFullscreen(!!document.fullscreenElement);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
 
   // ------------------------------
   // WEBSOCKET (Role + Password applied)
@@ -54,6 +123,7 @@ const MeetingRoom = ({ userInfo }) => {
     activeSpeakerId,
     chatMessages,
     error: wsError,
+    lastMessage,
     connect,
     disconnect,
     sendChatMessage,
@@ -89,14 +159,28 @@ const MeetingRoom = ({ userInfo }) => {
     startRecording,
     stopRecording,
   } = useAudioRecorder((pcmBytes) => {
-    // ✅ FIX: Use ref.current to always get latest connection state
-    if (isTranscriptConnectedRef.current) {
+    // ✅ FIX: Use refs to always get latest connection state
+    if (isTranscriptConnectedRef.current && isServerReadyRef.current) {
         console.log("🎵 Sending audio chunk:", pcmBytes.length, "bytes");
         sendAudioChunk(pcmBytes);
     } else {
-        console.warn("⚠️ Audio chunk dropped - WebSocket not connected");
+        console.warn("⚠️ Audio chunk dropped - Server not ready or WebSocket not connected", {
+          isTranscriptConnected: isTranscriptConnectedRef.current,
+          isServerReady: isServerReadyRef.current
+        });
     }
   });
+
+  // ------------------------------
+  // HANDLE ready_for_audio MESSAGE FROM SERVER
+  // ------------------------------
+  useEffect(() => {
+    if (lastMessage && lastMessage.type === 'ready_for_audio') {
+      console.log("✅ Server ready signal received:", lastMessage);
+      setIsServerReady(true);
+      isServerReadyRef.current = true;
+    }
+  }, [lastMessage]);
 
   // ------------------------------
   // UPDATE CONNECTION REF - ✅ FIX: Keep ref in sync with connection state
@@ -156,18 +240,25 @@ const MeetingRoom = ({ userInfo }) => {
     };
   }, []);
 
-  // Start recording once WebSocket is connected
+  // Start recording once WebSocket is connected AND server is ready
   useEffect(() => {
-    if (isConnected && !isRecording) {
-      console.log("✅ WebSocket connected, starting audio recording...");
-      console.log("📊 Connection state - isConnected:", isConnected, "isTranscriptConnected:", isTranscriptConnected);
+    if (isConnected && isServerReady && !isRecording) {
+      console.log("✅ WebSocket connected AND server ready, starting audio recording...");
+      console.log("📊 Connection state:", {
+        isConnected,
+        isServerReady,
+        isTranscriptConnected,
+        isRecording
+      });
       startRecording();
     } else if (!isConnected) {
       console.log("⏳ Waiting for WebSocket connection...");
+    } else if (!isServerReady) {
+      console.log("⏳ Waiting for server ready signal...");
     } else if (isRecording) {
       console.log("🎤 Recording already in progress");
     }
-  }, [isConnected]);
+  }, [isConnected, isServerReady, isRecording]);
 
   // ------------------------------
   // UPDATE EMOTION UI
@@ -268,7 +359,7 @@ const MeetingRoom = ({ userInfo }) => {
   // UI
   // ------------------------------
   return (
-    <div className="meeting-room">
+    <div className={`meeting-room ${isRoomFullscreen ? 'fullscreen' : ''}`} ref={meetingRoomRef}>
 
       {/* TOP BAR */}
       <div className="meeting-top-bar">
@@ -284,6 +375,20 @@ const MeetingRoom = ({ userInfo }) => {
           </div>
         </div>
 
+        <div className="meeting-header-actions">
+          <button 
+            className="btn-fullscreen"
+            onClick={toggleRoomFullscreen}
+            title={isRoomFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+          >
+            {isRoomFullscreen ? <Minimize2 size={18} /> : <Maximize size={18} />}
+            <span>{isRoomFullscreen ? "Exit Fullscreen" : "Fullscreen"}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* CONTROLS BAR */}
+      <div className="meeting-controls-bar">
         <div className="meeting-controls">
           {/* Audio */}
           <button className={`btn-control ${!isAudioEnabled ? "muted" : ""}`} onClick={toggleAudio}>
@@ -340,8 +445,18 @@ const MeetingRoom = ({ userInfo }) => {
           </button>
         </div>
 
-        <div className={`meeting-side-panel ${isSidePanelOpen ? 'open' : 'closed'}`}>
+        <div className={`meeting-side-panel ${isSidePanelOpen ? 'open' : 'closed'} ${isPanelMaximized ? 'maximized' : ''}`} style={{ width: isPanelMaximized ? '100%' : `${panelWidth}px` }}>
+          {isSidePanelOpen && !isPanelMaximized && (
+            <div className="panel-resize-handle" onMouseDown={handleResizeStart} />
+          )}
           <div className="panel-tabs">
+            <button 
+              className="panel-maximize-btn" 
+              onClick={togglePanelMaximize}
+              title={isPanelMaximized ? "Restore panel" : "Maximize panel"}
+            >
+              {isPanelMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+            </button>
             <button className={`panel-tab ${activeTab === "transcript" ? "active" : ""}`} onClick={() => setActiveTab("transcript")}>
               <FileText size={18} /> Transcript <span className="tab-badge">{transcripts.length}</span>
             </button>

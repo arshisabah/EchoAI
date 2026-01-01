@@ -175,6 +175,10 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                             console.log(`🎧 Listening... buffered ${data.buffered_duration}s`);
                             break;
 
+                        case 'ready_for_audio':
+                            console.log('🎵 Server ready to receive audio - streaming enabled:', data.streaming_enabled);
+                            break;
+
                         case 'peer_list':
                             // ✅ FIX: Handle peer_list to initiate WebRTC connections with existing participants
                             console.log('👥 Received peer list:', data.peers);
@@ -301,7 +305,7 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
         
         return sendMessage({
             type: 'audio_chunk',
-            audio: base64Audio,
+            audio_data: base64Audio,
             sample_rate: sampleRate,
             is_final: false
         });

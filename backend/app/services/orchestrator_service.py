@@ -117,12 +117,40 @@ class OrchestratorService:
     async def start_session(self, session_id: str):
         if session_id not in self.active_sessions:
             self.active_sessions[session_id] = SessionData(session_id)
-            logger.info(f"🟢 Created new session: {session_id}")
+            
+            # Start Deepgram stream if using streaming mode
+            if self.use_streaming and self.deepgram_service:
+                try:
+                    success = await self.deepgram_service.start_stream(
+                        session_id=session_id,
+                        on_transcript=lambda data: asyncio.create_task(self._handle_deepgram_transcript(session_id, data)),
+                        diarize=True
+                    )
+                    if success:
+                        logger.info(f"✅ Deepgram stream started for session: {session_id}")
+                    else:
+                        logger.warning(f"⚠️ Failed to start Deepgram stream for session: {session_id}")
+                except Exception as e:
+                    logger.error(f"❌ Error starting Deepgram stream: {e}", exc_info=True)
+            
+            logger.info(f"🟢 Created new session: {session_id} (streaming: {self.use_streaming})")
         return {
             "session_id": session_id,
             "status": "active",
             "created_at": self.active_sessions[session_id].created_at.isoformat()
         }
+
+    # ==========================================================
+    # HANDLE DEEPGRAM TRANSCRIPT CALLBACK
+    # ==========================================================
+    async def _handle_deepgram_transcript(self, session_id: str, transcript_data: Dict[str, Any]):
+        """Handle transcript callback from Deepgram."""
+        try:
+            logger.info(f"📝 Deepgram transcript received for {session_id}: {transcript_data.get('text', '')[:50]}")
+            # Process transcript data if needed
+            # This is called by Deepgram service when transcript is ready
+        except Exception as e:
+            logger.error(f"❌ Error handling Deepgram transcript: {e}", exc_info=True)
 
     # ==========================================================
     # PROCESS AUDIO CHUNK - FIXED
@@ -145,10 +173,14 @@ class OrchestratorService:
         Process audio using Deepgram streaming - immediate processing without buffering.
         """
         try:
-            logger.info(f"🎵 [STREAMING] Processing audio - session: {session_id}, participant: {participant_id}, bytes: {len(audio_bytes)}")
+            logger.debug(f"🎵 [STREAMING] Processing audio - session: {session_id}, participant: {participant_id}, bytes: {len(audio_bytes)}")
             
             # Ensure session exists
-            session = self.active_sessions.setdefault(session_id, SessionData(session_id))
+            if session_id not in self.active_sessions:
+                logger.warning(f"⚠️ Session {session_id} not found, creating it")
+                await self.start_session(session_id)
+            
+            session = self.active_sessions[session_id]
             session.last_activity = datetime.utcnow()
             
             # Convert audio_bytes to PCM format for Deepgram (int16)
@@ -193,7 +225,11 @@ class OrchestratorService:
             logger.info(f"🎵 [LEGACY] Processing audio chunk - session: {session_id}, participant: {participant_id}, bytes: {len(audio_bytes)}")
             
             # Ensure session exists
-            session = self.active_sessions.setdefault(session_id, SessionData(session_id))
+            if session_id not in self.active_sessions:
+                logger.warning(f"⚠️ [LEGACY] Session {session_id} not found, creating it")
+                await self.start_session(session_id)
+            
+            session = self.active_sessions[session_id]
             session.last_activity = datetime.utcnow()
 
             # ---------- STEP 1: Decode audio safely ----------
@@ -205,8 +241,9 @@ class OrchestratorService:
                 pcm = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
                 if len(pcm) > 0:
                     audio_array = pcm
-            except:
-                pass
+                    logger.debug(f"✅ Decoded as PCM: {len(pcm)} samples")
+            except Exception as e:
+                logger.debug(f"❌ PCM decode failed: {e}")
 
             # Try soundfile
             if audio_array is None:
@@ -217,22 +254,30 @@ class OrchestratorService:
                         sf_audio = np.mean(sf_audio, axis=1)
                     audio_array = sf_audio
                     sample_rate = sf_sr
-                except:
-                    pass
+                    logger.debug(f"✅ Decoded with soundfile: {len(sf_audio)} samples at {sf_sr}Hz")
+                except Exception as e:
+                    logger.debug(f"❌ Soundfile decode failed: {e}")
 
             # Fallback decode
             if audio_array is None:
-                audio_array, sample_rate = bytes_to_numpy(audio_bytes, sample_rate=16000)
+                try:
+                    audio_array, sample_rate = bytes_to_numpy(audio_bytes, sample_rate=16000)
+                    logger.debug(f"✅ Decoded with fallback: {len(audio_array)} samples")
+                except Exception as e:
+                    logger.error(f"❌ All audio decode methods failed: {e}")
 
             # Empty or invalid audio
             if audio_array is None or len(audio_array) == 0:
-                logger.debug(f"⚠️ Empty or invalid audio array for session {session_id}")
+                logger.warning(f"⚠️ Empty or invalid audio array for session {session_id}")
                 return None
 
             # Skip silence
-            if np.abs(audio_array).mean() < 0.006:
-                logger.debug(f"🔇 Skipping silence for session {session_id} (mean amplitude: {np.abs(audio_array).mean():.6f})")
+            mean_amplitude = np.abs(audio_array).mean()
+            if mean_amplitude < 0.006:
+                logger.debug(f"🔇 Skipping silence for session {session_id} (mean amplitude: {mean_amplitude:.6f})")
                 return None
+            
+            logger.debug(f"🔊 Audio has voice activity (mean amplitude: {mean_amplitude:.6f})")
 
             # Better normalization - preserve dynamics
             max_amplitude = np.max(np.abs(audio_array))
@@ -265,12 +310,12 @@ class OrchestratorService:
 
             # Wait for at least 0.8 seconds OR detect silence boundary (0.5s silence at end)
             # Reduced from 1.5s to 0.8s for better real-time responsiveness
-            if duration_sec < 1.2:
+            if duration_sec < 0.8:
                 logger.debug(f"⏳ Buffering audio for session {session_id}: {duration_sec:.2f}s / 0.8s minimum")
                 return {"type": "listening", "buffered_duration": duration_sec}
             
-            # ✅ FIX: Force transcription after 2.5s OR when silence is detected
-            if duration_sec < 2.5:
+            # ✅ FIX: Force transcription after 2.0s OR when silence is detected
+            if duration_sec < 2.0:
                 tail_samples = min(int(16000 * 0.5), len(combined))  # Check last 0.5 seconds
                 tail = combined[-tail_samples:]
                 tail_energy = np.sqrt(np.mean(tail ** 2))
@@ -282,7 +327,7 @@ class OrchestratorService:
                 else:
                     logger.info(f"🔇 Silence detected at {duration_sec:.2f}s - proceeding to transcription")
             else:
-                # Force transcription after 2.5 seconds regardless of silence
+                # Force transcription after 2.0 seconds regardless of silence
                 logger.info(f"⏰ Buffer timeout at {duration_sec:.2f}s - forcing transcription")
 
             # Clear buffer after processing
@@ -379,6 +424,7 @@ class OrchestratorService:
                 logger.info(f"✅ RETURNING SINGLE ENTRY:")
                 logger.info(f"   - speaker: {processed[0].get('speaker')}")
                 logger.info(f"   - text: {processed[0].get('text', '')[:100]}...")
+                logger.info(f"   - emotion: {processed[0].get('emotion')}")
                 logger.info(f"   - has text field: {'text' in processed[0]}")
                 logger.info(f"   - all keys: {list(processed[0].keys())}")
                 return processed[0]
@@ -387,6 +433,8 @@ class OrchestratorService:
                 return {"type": "multi_speaker_chunk", "entries": processed}
             else:
                 logger.warning(f"⚠️ No valid entries processed for session {session_id} - RETURNING NONE")
+                logger.warning(f"   - asr_results count: {len(asr_results)}")
+                logger.warning(f"   - processed count: {len(processed)}")
                 return None
 
         except Exception as e:

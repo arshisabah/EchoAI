@@ -16,9 +16,29 @@ os.environ["ANTHROPIC_API_KEY"] = "test-key"
 
 
 # Mock torch and transformers to prevent model loading
-sys.modules['torch'] = MagicMock()
+mock_torch = MagicMock()
+mock_backends = MagicMock()
+mock_mps = MagicMock()
+mock_mps.is_available.return_value = False
+mock_mps.is_built.return_value = False
+mock_backends.mps = mock_mps
+mock_torch.backends = mock_backends
+mock_torch.device = MagicMock(return_value='cpu')
+mock_torch.cuda.is_available.return_value = False
+
+sys.modules['torch'] = mock_torch
+sys.modules['torch.backends'] = mock_backends
+sys.modules['torch.backends.mps'] = mock_mps
 sys.modules['torchaudio'] = MagicMock()
 sys.modules['transformers'] = MagicMock()
+
+# Mock deepgram module to prevent import errors in tests
+mock_deepgram = MagicMock()
+mock_deepgram.DeepgramClient = MagicMock()
+mock_deepgram.DeepgramClientOptions = MagicMock()
+mock_deepgram.LiveTranscriptionEvents = MagicMock()
+mock_deepgram.LiveOptions = MagicMock()
+sys.modules['deepgram'] = mock_deepgram
 
 
 # Mock audio emotion analyzer to prevent model loading
@@ -55,3 +75,12 @@ def event_loop_policy():
     """Set event loop policy for async tests."""
     import asyncio
     return asyncio.get_event_loop_policy()
+
+
+@pytest.fixture
+async def cleanup_after_test():
+    """Cleanup fixture for async tests. Use explicitly in async tests that need cleanup."""
+    # Setup phase
+    yield
+    # Teardown phase  
+    await asyncio.sleep(0.1)  # Allow pending tasks to complete

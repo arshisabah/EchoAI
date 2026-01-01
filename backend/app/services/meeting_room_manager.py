@@ -239,6 +239,10 @@ class MeetingRoomManager:
                     logger.warning(f"Failed to close old websocket for {user_id}: {e}")
                 room.participants.pop(user_id)
             
+            # Handle role as either string or ParticipantRole enum
+            if isinstance(role, str):
+                role = ParticipantRole(role)
+            
             # Create participant
             participant = Participant(
                 user_id=user_id,

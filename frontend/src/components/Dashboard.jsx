@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Video, Users, Clock, TrendingUp, Download, FileText } from 'lucide-react';
+import { Plus, Video, Users, Clock, TrendingUp, Download, FileText, Eye, EyeOff } from 'lucide-react';
 import { meetingAPI, analyticsAPI } from '../services/api';
 
 const Dashboard = ({ userInfo }) => {
@@ -9,6 +9,8 @@ const Dashboard = ({ userInfo }) => {
   const [recentSessions, setRecentSessions] = useState([]);
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
+  const [showJoinPassword, setShowJoinPassword] = useState(false);
   const [newRoomData, setNewRoomData] = useState({
     roomName: '',
     password: '',
@@ -19,6 +21,7 @@ const Dashboard = ({ userInfo }) => {
     password: '',
   });
   const [passwordPrompt, setPasswordPrompt] = useState({ show: false, roomId: null, hasPassword: false });
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -73,28 +76,40 @@ const handleCreateRoom = async (e) => {
 
     // Capture password for navigation before clearing state
     const passwordForNav = passwordForApi || '';
+    const roomId = result.room_id;
 
     // Reset modal state
     setIsCreating(false);
     setNewRoomData({ roomName: '', password: '', maxParticipants: 50 });
     
-    // Reload dashboard to show new room
-    await loadDashboardData();
-    
-    // Navigate to the created room
+    // Navigate immediately to the created room
     navigate(
-      `/meeting/rooms/${encodeURIComponent(result.room_id)}?password=${encodeURIComponent(passwordForNav)}`
+      `/meeting/rooms/${encodeURIComponent(roomId)}?password=${encodeURIComponent(passwordForNav)}`
     );
 
   } catch (error) {
     console.error('❌ Error creating room:', error);
     
-    // More user-friendly error messages
-    const errorMessage = error.response?.data?.detail 
-      || error.message 
-      || 'Unknown error occurred';
+    // Check if room already exists
+    const errorMessage = error.response?.data?.detail || error.message || 'Unknown error occurred';
     
-    alert(`Failed to create room: ${errorMessage}`);
+    if (errorMessage.includes('already exists')) {
+      // Room was created but navigation failed - try to join it
+      console.log('Room already exists, attempting to join...');
+      const passwordForNav = newRoomData.password?.trim() || '';
+      const roomName = newRoomData.roomName?.trim();
+      
+      // Reset modal state
+      setIsCreating(false);
+      setNewRoomData({ roomName: '', password: '', maxParticipants: 50 });
+      
+      // Navigate to the existing room
+      navigate(
+        `/meeting/rooms/${encodeURIComponent(roomName)}?password=${encodeURIComponent(passwordForNav)}`
+      );
+    } else {
+      alert(`Failed to create room: ${errorMessage}`);
+    }
   }
 };
 
@@ -222,12 +237,22 @@ const handleCreateRoom = async (e) => {
 
               <div className="form-group">
                 <label>Password </label>
-                <input
-                  type="password"
-                  value={newRoomData.password}
-                  onChange={(e) => setNewRoomData({ ...newRoomData, password: e.target.value })}
-                  placeholder="Leave empty for no password"
-                />
+                <div className="password-input-wrapper">
+                  <input
+                    type={showCreatePassword ? "text" : "password"}
+                    value={newRoomData.password}
+                    onChange={(e) => setNewRoomData({ ...newRoomData, password: e.target.value })}
+                    placeholder="Leave empty for no password"
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    onClick={() => setShowCreatePassword(!showCreatePassword)}
+                    tabIndex="-1"
+                  >
+                    {showCreatePassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
               </div>
 
               <div className="form-group">
@@ -273,12 +298,22 @@ const handleCreateRoom = async (e) => {
 
               <div className="form-group">
                 <label>Password (if required)</label>
-                <input
-                  type="password"
-                  value={joinRoomData.password}
-                  onChange={(e) => setJoinRoomData({ ...joinRoomData, password: e.target.value })}
-                  placeholder="Leave empty if no password"
-                />
+                <div className="password-input-wrapper">
+                  <input
+                    type={showJoinPassword ? "text" : "password"}
+                    value={joinRoomData.password}
+                    onChange={(e) => setJoinRoomData({ ...joinRoomData, password: e.target.value })}
+                    placeholder="Leave empty if no password"
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    onClick={() => setShowJoinPassword(!showJoinPassword)}
+                    tabIndex="-1"
+                  >
+                    {showJoinPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
               </div>
 
               <div className="modal-actions">
@@ -433,13 +468,23 @@ const handleCreateRoom = async (e) => {
             <form onSubmit={handlePasswordSubmit}>
               <div className="form-group">
                 <label>Password *</label>
-                <input
-                  type="password"
-                  name="password"
-                  placeholder="Enter room password"
-                  required
-                  autoFocus
-                />
+                <div className="password-input-wrapper">
+                  <input
+                    type={showPasswordPrompt ? "text" : "password"}
+                    name="password"
+                    placeholder="Enter room password"
+                    required
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    onClick={() => setShowPasswordPrompt(!showPasswordPrompt)}
+                    tabIndex="-1"
+                  >
+                    {showPasswordPrompt ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
               </div>
               <div className="modal-actions">
                 <button type="button" className="btn-secondary" onClick={() => setPasswordPrompt({ show: false, roomId: null, hasPassword: false })}>

@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     API_TIMEOUT_SECONDS: int = int(os.getenv("API_TIMEOUT_SECONDS", "60"))
     USE_STREAMING_TRANSCRIPTION: bool = os.getenv("USE_STREAMING_TRANSCRIPTION", "true").lower() == "true"
     USE_ROOM_DIARIZATION: bool = os.getenv("USE_ROOM_DIARIZATION", "false").lower() == "true"
+    
+    # Transcript merging settings for Google Meet-like experience
+    MERGE_SAME_SPEAKER_TRANSCRIPTS: bool = os.getenv("MERGE_SAME_SPEAKER_TRANSCRIPTS", "true").lower() == "true"
+    SPEAKER_TURN_TIMEOUT_SECONDS: float = float(os.getenv("SPEAKER_TURN_TIMEOUT_SECONDS", "2.0"))
+    ENABLE_INCREMENTAL_TRANSCRIPTS: bool = os.getenv("ENABLE_INCREMENTAL_TRANSCRIPTS", "true").lower() == "true"
+    TIMEZONE: str = os.getenv("TIMEZONE", "Asia/Kolkata")  # IST by default
 
     # -------------------------------------------------------------------
     # OPENAI RATE LIMITING

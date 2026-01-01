@@ -1200,6 +1200,16 @@ async def meeting_websocket(
             "your_role": participant.role.value,
             "room_info": room_info
         }, "welcome")
+        
+        # Send ready_for_audio signal to indicate server is ready to receive audio
+        await safe_send(websocket, {
+            "type": "ready_for_audio",
+            "streaming_enabled": orchestrator.use_streaming,
+            "session_id": stream_id if (orchestrator.use_streaming and not use_room_diarization) else room_id,
+            "message": "Server is ready to receive audio"
+        }, "ready_for_audio")
+        
+        logger.info(f"📡 Sent ready_for_audio signal to {username}")
 
         await safe_send(websocket, {
             "type": "connection_ack",
@@ -1490,15 +1500,15 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
             logger.debug(f"📡 Streaming mode - audio sent to Deepgram for {username}")
             return
 
-        # 🔹 Handle lightweight "listening" heartbeats (legacy mode)
-        if result and result.get("type") == "listening":
-            logger.debug(f"⏳ Buffering audio for {username} in {room_id}: {result.get('buffered_duration', 0):.2f}s")
-            await safe_send(websocket, result, "listening_status")
-            return
-
         # 4️⃣ Skip empty result
         if not result:
             logger.debug(f"⚠️ No result from orchestrator for user {username} in {room_id}")
+            return
+
+        # 🔹 Handle lightweight "listening" heartbeats (legacy mode) - check AFTER empty check
+        if result and result.get("type") == "listening":
+            logger.debug(f"⏳ Buffering audio for {username} in {room_id}: {result.get('buffered_duration', 0):.2f}s")
+            await safe_send(websocket, result, "listening_status")
             return
 
         # ✅ FIX: Handle both single and multi-speaker responses (legacy mode)

@@ -97,30 +97,39 @@ const SummaryPanel = ({ roomId }) => {
       </div>
 
       <div className="summary-content">
-        {/* Main Summary */}
-        {summary?.summary?.summary && (
-          <div className="summary-section">
-            <h4>📋 Overview</h4>
-            <div className="summary-text">
-              {summary.summary.summary}
-            </div>
+        {/* No Data State */}
+        {!summary || (typeof summary.summary === 'string' && summary.summary === 'No transcript available yet') ? (
+          <div className="summary-empty">
+            <FileText size={48} />
+            <p>No meeting data available yet</p>
+            <p className="text-muted">Start speaking to generate a summary</p>
           </div>
-        )}
+        ) : (
+          <>
+            {/* Main Summary */}
+            {summary?.summary?.summary && (
+              <div className="summary-section">
+                <h4>📋 Overview</h4>
+                <div className="summary-text">
+                  {summary.summary.summary}
+                </div>
+              </div>
+            )}
 
-        {/* Key Points */}
-        {summary?.summary?.key_points && summary.summary.key_points.length > 0 && (
-          <div className="summary-section">
-            <h4>🎯 Key Points</h4>
-            <ul className="summary-list">
-              {summary.summary.key_points.map((point, i) => (
-                <li key={i}>
-                  <CheckCircle size={16} className="list-icon" />
-                  <span>{point}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+            {/* Key Points */}
+            {summary?.summary?.key_points && summary.summary.key_points.length > 0 && (
+              <div className="summary-section">
+                <h4>🎯 Key Points</h4>
+                <ul className="summary-list">
+                  {summary.summary.key_points.map((point, i) => (
+                    <li key={i}>
+                      <CheckCircle size={16} className="list-icon" />
+                      <span>{point}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
         {/* Action Items Summary */}
         {summary?.tasks && summary.tasks.length > 0 && (
@@ -179,19 +188,19 @@ const SummaryPanel = ({ roomId }) => {
         )}
 
         {/* Emotion Analysis Summary */}
-        {summary?.emotion_analysis && (
+        {summary?.analytics?.emotion_analysis && (
           <div className="summary-section">
             <h4>🎭 Emotion Overview</h4>
             <div className="emotion-summary">
               <div className="emotion-primary">
                 <span className="emotion-label">Overall Mood:</span>
-                <span className={`emotion-value emotion-${summary.emotion_analysis.session_summary?.overall_emotion || 'neutral'}`}>
-                  {summary.emotion_analysis.session_summary?.overall_emotion || 'Neutral'}
+                <span className={`emotion-value emotion-${summary.analytics.emotion_analysis.session_summary?.overall_emotion || 'neutral'}`}>
+                  {summary.analytics.emotion_analysis.session_summary?.overall_emotion || 'Neutral'}
                 </span>
               </div>
-              {summary.emotion_analysis.session_summary?.emotion_distribution && (
+              {summary.analytics.emotion_analysis.session_summary?.emotion_distribution && (
                 <div className="emotion-distribution">
-                  {Object.entries(summary.emotion_analysis.session_summary.emotion_distribution)
+                  {Object.entries(summary.analytics.emotion_analysis.session_summary.emotion_distribution)
                     .slice(0, 3)
                     .map(([emotion, count]) => (
                       <div key={emotion} className="emotion-bar">
@@ -222,15 +231,15 @@ const SummaryPanel = ({ roomId }) => {
             <div className="metadata-item">
               <span className="metadata-label">Duration:</span>
               <span className="metadata-value">
-                {summary?.session_duration_minutes 
-                  ? `${Math.round(summary.session_duration_minutes)} min` 
+                {summary?.analytics?.session_duration_minutes 
+                  ? `${Math.round(summary.analytics.session_duration_minutes)} min` 
                   : 'N/A'}
               </span>
             </div>
             <div className="metadata-item">
               <span className="metadata-label">Total Words:</span>
               <span className="metadata-value">
-                {summary?.emotion_analysis?.total_analyzed || 0}
+                {summary?.analytics?.emotion_analysis?.total_analyzed || 0}
               </span>
             </div>
             <div className="metadata-item">
@@ -243,6 +252,8 @@ const SummaryPanel = ({ roomId }) => {
             </div>
           </div>
         </div>
+          </>
+        )}
 
         {/* Auto Refresh Toggle */}
         <div className="summary-footer">
