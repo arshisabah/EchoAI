@@ -1,3 +1,8 @@
+# ============================================
+# EchoAI Backend Requirements
+# Complete dependency list for easy setup
+# ============================================
+
 # Core Framework
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
@@ -5,6 +10,7 @@ pydantic==2.5.3
 pydantic-settings==2.1.0
 python-multipart==0.0.6
 websockets==12.0
+starlette==0.35.1
 
 # API Clients
 openai==1.10.0
@@ -12,24 +18,29 @@ anthropic==0.18.0
 httpx==0.26.0
 aiohttp==3.9.1
 
-# AI/ML Libraries (macOS optimized)
+# AI/ML Libraries
 torch>=2.1.0
 torchaudio>=2.1.0
 transformers==4.36.2
 
-# Transcription
-openai-whisper==20231117
-# WhisperX will be installed via git in setup script
+# Transcription - Faster-Whisper (local, fast, unlimited)
+faster-whisper==1.0.0
 
-# Real-time streaming transcription
+# Alternative: OpenAI Whisper (slower but more accurate)
+openai-whisper==20231117
+
+# Real-time streaming transcription (Deepgram - optional)
 deepgram-sdk==3.2.7
 
-# Audio Processing (macOS compatible)
+# Audio Processing
 librosa==0.10.1
 soundfile==0.12.1
 pydub==0.25.1
 numpy==1.26.3
 scipy==1.11.4
+
+# Emotion Analysis (Audio)
+# speechbrain - will be installed separately if needed
 
 # Database
 asyncpg==0.29.0
@@ -49,3 +60,24 @@ psutil==5.9.7
 pytest==7.4.4
 pytest-asyncio==0.23.3
 black==23.12.1
+
+# ============================================
+# Installation Instructions for New Laptop:
+# ============================================
+# 1. Create virtual environment:
+#    python -m venv venv
+#    
+# 2. Activate virtual environment:
+#    Windows: venv\Scripts\activate
+#    Linux/Mac: source venv/bin/activate
+#    
+# 3. Install dependencies:
+#    pip install -r requirements.txt
+#    
+# 4. Set up environment variables:
+#    Copy .env.example to .env and fill in API keys
+#    
+# 5. Run the backend:
+#    cd backend
+#    uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# ============================================

@@ -11,6 +11,11 @@ const TranscriptPanel = ({ transcripts, onExport, roomId }) => {
   const [downloading, setDownloading] = useState(null);
   const [userScrolled, setUserScrolled] = useState(false);
 
+  // Debug: Log transcripts changes
+  useEffect(() => {
+    console.log('🎯 TranscriptPanel received transcripts:', transcripts.length, transcripts);
+  }, [transcripts]);
+
   // Auto-scroll only if user is near bottom
   useEffect(() => {
     const container = containerRef.current;

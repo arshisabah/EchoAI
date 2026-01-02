@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff, MessageSquare,
@@ -37,7 +37,6 @@ const MeetingRoom = ({ userInfo }) => {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [showPostMeetingModal, setShowPostMeetingModal] = useState(false);
   const [isSidePanelOpen, setIsSidePanelOpen] = useState(true);
-  const [isServerReady, setIsServerReady] = useState(false);
   const [panelWidth, setPanelWidth] = useState(400);
   const [isResizing, setIsResizing] = useState(false);
   const [isPanelMaximized, setIsPanelMaximized] = useState(false);
@@ -120,6 +119,7 @@ const MeetingRoom = ({ userInfo }) => {
   // ------------------------------
   const {
     isConnected,
+    isServerReady,
     isTranscriptConnected,  // ✅ FIX: Added this from useWebSocket return
     transcripts,
     participants,
@@ -147,7 +147,7 @@ const MeetingRoom = ({ userInfo }) => {
     startLocalMedia,
     stopLocalMedia,
     toggleVideo,
-    toggleAudio,
+    toggleAudio: toggleAudioWebRTC,
     handleSignalingMessage,
     startScreenShare,
     stopScreenShare
@@ -175,15 +175,27 @@ const MeetingRoom = ({ userInfo }) => {
   });
 
   // ------------------------------
-  // HANDLE ready_for_audio MESSAGE FROM SERVER
+  // CUSTOM AUDIO TOGGLE - Controls both WebRTC and transcription recording
   // ------------------------------
-  useEffect(() => {
-    if (lastMessage && lastMessage.type === 'ready_for_audio') {
-      console.log("✅ Server ready signal received:", lastMessage);
-      setIsServerReady(true);
-      isServerReadyRef.current = true;
+  const toggleAudio = useCallback(() => {
+    console.log(`🎤 Toggling audio: ${isAudioEnabled} -> ${!isAudioEnabled}`);
+    toggleAudioWebRTC(); // Toggle WebRTC audio (mute/unmute for other participants)
+    
+    // Also start/stop transcription recording
+    if (isAudioEnabled) {
+      // Currently enabled, so we're turning it OFF
+      console.log("🔇 Microphone disabled - stopping transcription recording");
+      stopRecording();
+    } else {
+      // Currently disabled, so we're turning it ON
+      console.log("🔊 Microphone enabled - starting transcription recording");
+      if (isConnected && isServerReady) {
+        startRecording().catch(err => {
+          console.error("❌ Failed to restart recording:", err);
+        });
+      }
     }
-  }, [lastMessage]);
+  }, [isAudioEnabled, toggleAudioWebRTC, stopRecording, startRecording, isConnected, isServerReady]);
 
   // ------------------------------
   // UPDATE CONNECTION REF - ✅ FIX: Keep ref in sync with connection state
@@ -192,6 +204,14 @@ const MeetingRoom = ({ userInfo }) => {
     isTranscriptConnectedRef.current = isTranscriptConnected;
     console.log("📡 Connection state updated - isTranscriptConnected:", isTranscriptConnected);
   }, [isTranscriptConnected]);
+
+  // ------------------------------
+  // UPDATE SERVER READY REF - ✅ FIX: Keep ref in sync with server ready state from useWebSocket
+  // ------------------------------
+  useEffect(() => {
+    isServerReadyRef.current = isServerReady;
+    console.log("🚀 Server ready state updated - isServerReady:", isServerReady);
+  }, [isServerReady]);
 
   // ------------------------------
   // LOAD ROOM INFO → DETERMINE ROLE
@@ -253,7 +273,20 @@ const MeetingRoom = ({ userInfo }) => {
         isTranscriptConnected,
         isRecording
       });
-      startRecording();
+      
+      // Start recording with error handling
+      const startAudioRecording = async () => {
+        try {
+          console.log("🎤 Requesting microphone access...");
+          await startRecording();
+          console.log("✅ Audio recording started successfully");
+        } catch (error) {
+          console.error("❌ Failed to start audio recording:", error);
+          alert("Microphone access required! Please allow microphone access and refresh the page.");
+        }
+      };
+      
+      startAudioRecording();
     } else if (!isConnected) {
       console.log("⏳ Waiting for WebSocket connection...");
     } else if (!isServerReady) {

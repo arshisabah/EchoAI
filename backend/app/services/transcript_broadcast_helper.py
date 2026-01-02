@@ -1,5 +1,5 @@
-"""
-Helper functions for Google Meet-style transcript broadcasting with emotion analysis
+"""[DEPRECATED] This file is no longer used. 
+Emotion processing is now handled by AsyncEmotionProcessor in async_emotion_processor.py
 """
 import logging
 import asyncio

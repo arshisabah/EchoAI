@@ -30,15 +30,17 @@ class FasterWhisperService:
         try:
             from faster_whisper import WhisperModel
             
-            # Use base model for optimal speed/accuracy balance
-            logger.info("🔧 Loading Faster-Whisper model (base - optimized balance)...")
+            # Use base model for optimal accuracy with aggressive speed tuning
+            logger.info("🔧 Loading Faster-Whisper model (base - low latency)...")
             self.model = WhisperModel(
-                "base",  # base=optimal balance for multi-user scenarios
+                "base",  # base=best accuracy/speed tradeoff
                 device="cpu",
                 compute_type="int8",  # Optimized for CPU speed
-                num_workers=1  # Single worker for lowest latency
+                num_workers=1,  # Single worker for lowest latency
+                download_root=None,
+                local_files_only=False
             )
-            logger.info("✅ Faster-Whisper model loaded successfully (base - optimized mode)")
+            logger.info("✅ Faster-Whisper model loaded successfully (base - low latency mode)")
             
         except Exception as e:
             logger.error(f"❌ Failed to load Faster-Whisper model: {e}")
@@ -108,8 +110,8 @@ class FasterWhisperService:
         """Continuously process audio buffer"""
         try:
             session = self.active_sessions[session_id]
-            process_interval = 0.3  # Process every 300ms
-            min_audio_length = 64000  # 2 seconds minimum (increased from 0.5s)
+            process_interval = 0.05  # Process every 50ms (maximum aggression)
+            min_audio_length = 8192  # 0.25 seconds minimum (absolute minimum)
             silence_threshold = 10.0  # 10 seconds of silence
             duration_threshold = 30.0  # 30 seconds continuous speaking
             
@@ -124,8 +126,19 @@ class FasterWhisperService:
             
             logger.info(f"🎙️ Starting audio processing loop for {session_id}")
             
-            while session["running"]:
+            # Main processing loop - check running flag on each iteration
+            while session.get("running", False):
                 await asyncio.sleep(process_interval)
+                
+                # Double-check session still exists and is running
+                if session_id not in self.active_sessions:
+                    logger.info(f"Session {session_id} no longer exists, stopping processing loop")
+                    break
+                    
+                session = self.active_sessions.get(session_id)
+                if not session or not session.get("running", False):
+                    logger.info(f"Session {session_id} stopped, exiting processing loop")
+                    break
                 
                 current_time = asyncio.get_event_loop().time()
                 time_since_audio = current_time - session.get("last_audio_time", current_time)
@@ -174,12 +187,15 @@ class FasterWhisperService:
                         audio_array,
                         language="en",  # Force English language
                         task="transcribe",  # Transcribe (don't translate)
-                        beam_size=1,
-                        best_of=1,
-                        temperature=[0.0, 0.2, 0.4, 0.6],  # Try multiple temperatures for better detection
-                        vad_filter=False,  # Disable VAD - was filtering all speech as noise
-                        word_timestamps=False,
-                        no_speech_threshold=0.3  # Lower threshold = more sensitive to speech
+                        beam_size=1,  # Greedy decoding for speed
+                        best_of=1,  # No sampling for speed
+                        temperature=0.0,  # Single temperature for speed
+                        vad_filter=False,  # Disable VAD
+                        word_timestamps=False,  # No word timestamps for speed
+                        no_speech_threshold=0.4,  # Balanced threshold
+                        compression_ratio_threshold=2.4,
+                        log_prob_threshold=-1.0,
+                        condition_on_previous_text=False  # Faster without context
                     )
                     
                     # Convert generator to list to check if empty
@@ -196,35 +212,34 @@ class FasterWhisperService:
                     full_text = full_text.strip()
                     
                     if full_text and full_text != session["last_transcript_text"]:
-                        # Check if we should create new bar
-                        create_new_bar = session.get("create_new_bar", False)
+                        # Check if we need to start a new bar (duration/silence threshold reached)
+                        should_finalize = session.get("create_new_bar", False)
+                        
+                        # ✅ FIX: Reset accumulated text BEFORE starting new bar
+                        if should_finalize:
+                            logger.info(f"🔄 Finalizing current bar and starting fresh accumulation")
+                            session["accumulated_text"] = ""  # Reset for new bar
                         
                         # Accumulate text for current bar
-                        if create_new_bar:
-                            # Reset accumulated text when starting new bar
-                            session["accumulated_text"] = full_text
+                        if session["accumulated_text"]:
+                            session["accumulated_text"] += " " + full_text
                         else:
-                            # Append to accumulated text
-                            if session["accumulated_text"]:
-                                session["accumulated_text"] += " " + full_text
-                            else:
-                                session["accumulated_text"] = full_text
+                            session["accumulated_text"] = full_text
                         
-                        # Send CUMULATIVE text (not just the new chunk)
+                        # Send CUMULATIVE text (entire accumulated transcript for this bar)
                         text_to_send = session["accumulated_text"]
                         
-                        logger.info(f"📝 Transcript chunk: '{full_text[:30]}...' → Cumulative: '{text_to_send[:50]}...' (is_final={create_new_bar})")
+                        logger.info(f"📝 Transcript chunk: '{full_text[:30]}...' → Cumulative: '{text_to_send[:50]}...' (is_final={should_finalize})")
                         
                         # Send transcript
                         result = {
                             "text": text_to_send,
-                            "is_final": create_new_bar,
+                            "is_final": should_finalize,
                             "confidence": 1.0,
-                            "speech_final": create_new_bar,
-                            "create_new_bar": create_new_bar
+                            "speech_final": should_finalize,
                         }
                         
-                        logger.info(f"📤 Calling callback (is_final={create_new_bar})")
+                        logger.info(f"📤 Calling callback (is_final={should_finalize})")
                         await session["callback"](result)
                         logger.info(f"✅ Callback completed")
                         
@@ -232,15 +247,15 @@ class FasterWhisperService:
                         session["last_transcript_text"] = full_text
                         session["accumulated_audio"] = bytearray()
                         
-                        # Reset flags if new bar was created
-                        if create_new_bar:
+                        # Reset flags and timers if bar was finalized
+                        if should_finalize:
                             session["bar_start_time"] = asyncio.get_event_loop().time()
                             session["create_new_bar"] = False
                             session["silence_flag_set"] = False
                             session["duration_flag_set"] = False
                             session["last_transcript_text"] = ""
-                            session["accumulated_text"] = ""  # Reset accumulation
-                            logger.info(f"🆕 New bar created")
+                            # Note: accumulated_text already reset before accumulating
+                            logger.info(f"🆕 Bar finalized, timers reset")
                     else:
                         if not full_text:
                             logger.info(f"⚠️ No speech detected in audio buffer, clearing buffer")
@@ -259,22 +274,34 @@ class FasterWhisperService:
         """Stop transcription stream"""
         try:
             if session_id in self.active_sessions:
+                # Set running flag to False first
                 self.active_sessions[session_id]["running"] = False
+                logger.info(f"🛑 Stopping stream for {session_id}")
+                
+                # Give processing loop a moment to exit gracefully
+                await asyncio.sleep(0.2)
                 
                 # Cancel processing task
                 if session_id in self.processing_tasks:
-                    self.processing_tasks[session_id].cancel()
+                    task = self.processing_tasks[session_id]
+                    if not task.done():
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
                     del self.processing_tasks[session_id]
                 
-                # Cleanup
-                del self.active_sessions[session_id]
+                # Cleanup sessions and buffers
+                if session_id in self.active_sessions:
+                    del self.active_sessions[session_id]
                 if session_id in self.audio_buffers:
                     del self.audio_buffers[session_id]
                 
                 logger.info(f"✅ Stopped Faster-Whisper stream for {session_id}")
                 
         except Exception as e:
-            logger.error(f"❌ Error stopping stream: {e}")
+            logger.error(f"❌ Error stopping stream: {e}", exc_info=True)
 
 
 # Singleton instance

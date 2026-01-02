@@ -123,13 +123,16 @@ class MeetingRoomManager:
         """
         try:
             if websocket.client_state == WebSocketState.CONNECTED:
+                # Log transcript_bar messages at INFO level
+                if data.get("type") == "transcript_bar":
+                    logger.info(f"📤 Sending transcript_bar to {user_id[:20]}: action={data.get('action')}, text={data.get('bar', {}).get('text', '')[:30]}...")
                 await websocket.send_json(data)
                 return True
             else:
-                logger.debug(f"WebSocket not connected for {user_id} (state: {websocket.client_state}), skipping send")
+                logger.warning(f"WebSocket not connected for {user_id} (state: {websocket.client_state}), skipping send")
                 return False
         except Exception as e:
-            logger.debug(f"Failed to send to {user_id}: {e}")
+            logger.warning(f"Failed to send to {user_id}: {e}")
             return False
     
     async def start_broadcasting(self):
@@ -311,19 +314,18 @@ class MeetingRoomManager:
                 # This prevents premature closure during active transcription
                 await asyncio.sleep(0.1)
                 
-                # ✅ Close the participant's WebSocket connection
-                try:
-                    # Only close if still connected
-                    if participant.websocket.client_state == WebSocketState.CONNECTED:
-                        await participant.websocket.close()
-                        logger.info(f"Closed WebSocket for {participant.username} ({user_id})")
-                except Exception as e:
-                    logger.warning(f"Error closing WebSocket for {user_id}: {e}")
+                # ✅ DON'T close WebSocket here - let the finally block handle it
+                # Closing here can cause connection state confusion and duplicate cleanup
+                # The WebSocket cleanup is handled by the calling code in meeting.py
+                logger.debug(f"WebSocket for {participant.username} will be closed by connection handler")
                 
                 # ✅ End room if empty
             if len(room.participants) == 0:
                 room.status = MeetingStatus.ENDED
                 logger.info(f"Room {room_id} ended (empty)")
+                
+                # Schedule delayed cleanup (30 seconds) to allow reconnection
+                asyncio.create_task(self._delayed_room_cleanup(room_id, delay=30))
                 
                 # Notify frontend that room ended
                 await self.broadcast_to_room(room_id, {
@@ -331,6 +333,17 @@ class MeetingRoomManager:
                     "room_id": room_id,
                     "timestamp": get_ist_timestamp()
                 })
+    
+    async def _delayed_room_cleanup(self, room_id: str, delay: int = 30):
+        """Clean up empty rooms after a delay to allow reconnection."""
+        await asyncio.sleep(delay)
+        
+        room = self.rooms.get(room_id)
+        if room and len(room.participants) == 0:
+            self.rooms.pop(room_id, None)
+            logger.info(f"🧹 Cleaned up empty room {room_id} after {delay}s grace period")
+        elif room:
+            logger.debug(f"⏭️ Room {room_id} has participants, skipping cleanup")
     
     async def broadcast_to_room(
         self,
@@ -383,16 +396,16 @@ class MeetingRoomManager:
         
         # Log successful sends
         if successful_sends:
-            logger.debug(f"✅ Message sent to {len(successful_sends)} participants in room {room_id}")
+            logger.info(f"✅ Message sent to {len(successful_sends)} participants in room {room_id} (type: {message.get('type')})")
         
         # Clean up dead connections
         for user_id in dead_connections:
             await self.leave_room(room_id, user_id)
         
-        # 🔹 Auto-remove empty rooms to save memory
+        # 🔹 Don't auto-remove empty rooms immediately - keep them for reconnection
+        # Rooms will be cleaned up by a periodic cleanup task or when explicitly closed
         if not room.participants:
-            self.rooms.pop(room_id, None)
-            logger.info(f"🧹 Cleaned up empty room {room_id}")
+            logger.debug(f"📭 Room {room_id} is now empty (will be cleaned up if no reconnection)")
     async def broadcast_transcript(
         self,
         room_id: str,
@@ -432,20 +445,23 @@ class MeetingRoomManager:
             entry_id = f"{user_id}_{room_id}_{uuid.uuid4().hex[:8]}"
         
         message_id = f"transcript_{user_id}_{datetime.utcnow().timestamp():.0f}"
-        # ✅ FIX: Ensure message format matches frontend expectations
+        # ✅ FIX: Use transcript_bar format to match continuous transcription
         message = {
-            "type": "live_transcript",
-            "entry_id": entry_id,  # CRITICAL: Frontend needs this for updates
-            "user_id": user_id,
-            "username": username,
-            "text": text,
-            "emotion": emotion,
-            "confidence": confidence,
-            "emotion_confidence": 0.0,
-            "emotion_guidance": emotion_guidance,
-            "is_final": is_final,
-            "partial": not is_final,
-            "message_id": message_id,
+            "type": "transcript_bar",
+            "action": "create" if is_final else "append",
+            "bar": {
+                "id": entry_id,
+                "session_id": room_id,
+                "speaker_id": user_id,
+                "speaker_name": username,
+                "text": text,
+                "status": "finalized" if is_final else "active",
+                "emotion": emotion,
+                "emotion_confidence": confidence,
+                "emotion_guidance": emotion_guidance,
+                "timestamp": get_ist_timestamp(),
+                "duration": 0.0
+            },
             "timestamp": get_ist_timestamp()
         }
         

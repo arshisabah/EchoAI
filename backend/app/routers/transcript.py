@@ -185,6 +185,11 @@ async def _handle_orchestrator_result(websocket: WebSocket, result, session_id: 
         await safe_send(websocket, {"type": "no_speech"})
         return
 
+    # CONTINUOUS TRANSCRIPT BAR (NEW FORMAT)
+    if isinstance(result, dict) and result.get("type") == "transcript_bar":
+        await safe_send(websocket, result)
+        return
+
     # MULTI ENTRY
     if isinstance(result, dict) and result.get("type") == "multi_speaker":
         await safe_send(websocket, {

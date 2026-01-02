@@ -24,6 +24,8 @@ from app.services.speaker_identification_service import get_speaker_service
 from app.services.audio_utils import bytes_to_numpy
 from app.modules.realtime_store import get_transcript_store
 from app.utils.timezone import get_ist_timestamp
+from app.services.continuous_transcript_manager import get_continuous_transcript_manager
+from app.services.async_emotion_processor import get_async_emotion_processor
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +83,14 @@ class OrchestratorService:
         self.summary_service = get_summary_service()
         self.speaker_service = get_speaker_service()
         self.transcript_store = get_transcript_store()
+        self.transcript_manager = get_continuous_transcript_manager()
+        self.emotion_processor = get_async_emotion_processor()
 
         self.active_sessions: Dict[str, SessionData] = {}
         self.audio_buffers: AudioBufferDict = AudioBufferDict()
+        
+        # Enable continuous transcription mode (Google Meet-like)
+        self.use_continuous_transcription = True
         
         # Initialize streaming transcription (using Faster-Whisper - local, unlimited, free)
         self.use_streaming = True  # Always use streaming with local model
@@ -113,15 +120,89 @@ class OrchestratorService:
         if session_id not in self.active_sessions:
             self.active_sessions[session_id] = SessionData(session_id)
             
+            # Start emotion processor if not running
+            if not self.emotion_processor.running:
+                await self.emotion_processor.start()
+            
             # Note: Faster-Whisper stream callback is registered by meeting.py, not here
             # This allows meeting.py to handle broadcasts directly
             
-            logger.info(f"🟢 Created new session: {session_id} (streaming: {self.use_streaming})")
+            logger.info(f"🟢 Created new session: {session_id} (streaming: {self.use_streaming}, continuous: {self.use_continuous_transcription})")
         return {
             "session_id": session_id,
             "status": "active",
             "created_at": self.active_sessions[session_id].created_at.isoformat()
         }
+
+    # ==========================================================
+    # PROCESS WITH CONTINUOUS TRANSCRIPTION (NEW)
+    # ==========================================================
+    async def process_transcription_continuous(
+        self, 
+        session_id: str,
+        speaker: str,
+        text: str,
+        confidence: float,
+        audio_array: Optional[np.ndarray] = None,
+        speaker_name: str = "Unknown"
+    ) -> Dict[str, Any]:
+        """
+        Process transcription using continuous transcript bar management.
+        Returns action (append/create) and bar data for WebSocket response.
+        """
+        try:
+            # Process through continuous transcript manager
+            result = await self.transcript_manager.process_transcription(
+                session_id=session_id,
+                speaker=speaker,
+                text=text,
+                confidence=confidence,
+                timestamp=datetime.utcnow(),
+                speaker_name=speaker_name
+            )
+            
+            bar = result["bar"]
+            action = result["action"]
+            
+            # Cache audio for emotion processing (if available)
+            if audio_array is not None and len(audio_array) > 0:
+                self.emotion_processor.cache_audio_for_bar(bar.id, audio_array)
+            
+            # Build response for WebSocket
+            response = {
+                "type": "transcript_bar",
+                "action": action,  # "append" or "create"
+                "bar": bar.to_dict()
+            }
+            
+            if action == "create" and "reason" in result:
+                response["reason"] = result["reason"]
+            
+            logger.info(
+                f"📊 Continuous transcription: action={action}, "
+                f"session={session_id}, speaker={speaker}, "
+                f"bar_id={bar.id}, text_length={len(text)}"
+            )
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"❌ Error in continuous transcription: {e}", exc_info=True)
+            return {
+                "type": "transcript_bar",
+                "action": "create",
+                "bar": {
+                    "id": str(uuid.uuid4()),
+                    "session_id": session_id,
+                    "speaker": speaker,
+                    "text": text,
+                    "started_at": datetime.utcnow().isoformat(),
+                    "updated_at": datetime.utcnow().isoformat(),
+                    "confidence": confidence,
+                    "status": "active",
+                    "word_count": len(text.split())
+                }
+            }
 
     # ==========================================================
     # HANDLE FASTER-WHISPER TRANSCRIPT CALLBACK
@@ -508,6 +589,10 @@ class OrchestratorService:
                 session.is_active = False
                 session.last_activity = datetime.utcnow()
                 logger.info(f"🔒 Closed session: {session_id}")
+            
+            # Finalize any active transcript bars
+            if self.use_continuous_transcription:
+                await self.transcript_manager.force_finalize_session(session_id)
             
             # Clear audio buffer
             if session_id in self.audio_buffers:

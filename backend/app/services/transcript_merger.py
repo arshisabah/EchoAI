@@ -1,3 +1,6 @@
+"""[DEPRECATED] This file is no longer used.
+Transcript merging is now handled by ContinuousTranscriptManager in continuous_transcript_manager.py
+"""
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Optional, List

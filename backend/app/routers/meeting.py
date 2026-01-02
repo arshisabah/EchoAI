@@ -865,14 +865,15 @@ async def meeting_websocket(
 
         # If user already connected, remove from room first (prevent cleanup), then close socket
         if existing_room and user_id in existing_room.participants:
-            old_participant = existing_room.participants[user_id]
-            # Remove from participants BEFORE closing to prevent finally block from cleaning up room
-            existing_room.participants.pop(user_id, None)
+            old_participant = existing_room.participants.pop(user_id, None)
             logger.info(f"🔄 Replacing existing connection for {user_id} in {room_id}")
-            try:
-                await old_participant.websocket.close()
-            except Exception as e:
-                logger.debug(f"Failed to close old websocket for {user_id}: {e}", exc_info=True)
+            if old_participant:
+                try:
+                    # Close old websocket gracefully with code 1000 (normal closure)
+                    if old_participant.websocket.client_state == WebSocketState.CONNECTED:
+                        await old_participant.websocket.close(code=1000, reason="Replaced by new connection")
+                except Exception as e:
+                    logger.debug(f"Error closing old websocket for {user_id}: {e}", exc_info=True)
 
         # Determine actual role server-side (trust created_by)
         room_for_role_check = room_manager.rooms.get(room_id)
@@ -1066,128 +1067,96 @@ async def meeting_websocket(
             current_entry_id = None
             
             async def on_deepgram_transcript(result: dict):
-                """Handle transcript results from Deepgram streaming"""
+                """Handle transcript results from Deepgram streaming with continuous bars"""
                 nonlocal current_entry_id
                 try:
                     text = result.get('text', '').strip()
+                    
+                    logger.info(f"🔔 Callback received - text_len={len(text)}, is_final={result.get('is_final', False)}")
+                    
                     if not text:
+                        logger.warning(f"⚠️ Empty text in callback, skipping")
                         return
                     
                     is_final = result.get('is_final', False)
                     confidence = result.get('confidence', 1.0)
-                    create_new_bar = result.get('create_new_bar', False)
                     
                     # Generate or maintain entry_id
-                    if is_final or current_entry_id is None:
+                    if current_entry_id is None:
                         import uuid
                         current_entry_id = f"{current_user_id}_{current_room_id}_{uuid.uuid4().hex[:8]}"
                         logger.info(f"🆕 New entry_id: {current_entry_id}")
                     
-                    # Use username directly (each user has their own stream)
                     display_name = current_username
                     
-                    logger.info(f"📝 Transcript for {display_name}: '{text[:50]}...' (is_final={is_final}, new_bar={create_new_bar}, entry_id={current_entry_id[:12]}...)")
+                    logger.info(f"📝 Transcript for {display_name}: '{text[:50]}...' (is_final={is_final})")
                     
-                    # ALWAYS broadcast immediately for real-time display
-                    await room_manager.broadcast_transcript(
-                        room_id=current_room_id,
-                        user_id=current_user_id,
-                        username=display_name,
-                        text=text,
-                        emotion="neutral",
-                        confidence=0.0,
-                        emotion_guidance={},
-                        is_final=is_final,  # False = append, True = new bar
-                        entry_id=current_entry_id
-                    )
-                    
-                    # ALWAYS run emotion analysis in background (for all transcripts)
-                    logger.info(f"🎭 Starting background emotion analysis for: '{text[:30]}...'")
-                    asyncio.create_task(analyze_and_update_emotion(
-                        text=text,
-                        stream_id=current_stream_id,
-                        room_id=current_room_id,
-                        user_id=current_user_id,
-                        username=display_name,
-                        entry_id=current_entry_id
-                    ))
-                    
-                    # Store transcript
-                    if is_final:
-                        store = get_transcript_store()
-                        entry_obj = await store.add_transcript_entry(
-                            meeting_id=current_room_id,
+                    # ✅ Use continuous transcript manager
+                    try:
+                        # Get audio for emotion caching
+                        audio_array = None
+                        if current_stream_id in _room_audio_buffers and len(_room_audio_buffers[current_stream_id]) > 0:
+                            try:
+                                import numpy as np
+                                recent_chunks = _room_audio_buffers[current_stream_id][-15:]
+                                audio_array = np.concatenate(recent_chunks)
+                            except Exception as e:
+                                logger.warning(f"⚠️ Failed to get audio buffer: {e}")
+                        
+                        # Process through continuous transcript manager
+                        transcript_result = await orchestrator.process_transcription_continuous(
+                            session_id=current_room_id,
                             speaker=current_user_id,
                             text=text,
-                            confidence=confidence
+                            confidence=confidence,
+                            audio_array=audio_array,
+                            speaker_name=display_name
                         )
-                        logger.info(f"✅ Stored final transcript for {display_name}")
+                        
+                        # Extract bar data
+                        bar_data = transcript_result.get("bar", {})
+                        action = transcript_result.get("action", "create")
+                        
+                        # Broadcast to room with new format
+                        await room_manager.broadcast_to_room(current_room_id, {
+                            "type": "transcript_bar",
+                            "action": action,  # "append" or "create"
+                            "bar": bar_data,
+                            "timestamp": get_ist_timestamp()
+                        })
+                        
+                        logger.info(f"✅ Broadcast continuous transcript: action={action}, bar_id={bar_data.get('id')}")
+                        
+                        # Store in transcript store if it's a finalized bar
+                        if action == "create":
+                            store = get_transcript_store()
+                            await store.add_transcript_entry(
+                                meeting_id=current_room_id,
+                                speaker=current_user_id,
+                                text=text,
+                                confidence=confidence
+                            )
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Error in continuous transcription: {e}", exc_info=True)
+                        # Fallback to old format
+                        await room_manager.broadcast_transcript(
+                            room_id=current_room_id,
+                            user_id=current_user_id,
+                            username=display_name,
+                            text=text,
+                            emotion="neutral",
+                            confidence=0.0,
+                            emotion_guidance={},
+                            is_final=True,
+                            entry_id=current_entry_id
+                        )
                     
                 except Exception as e:
                     logger.error(f"❌ Error in transcript callback: {e}", exc_info=True)
             
-            async def analyze_and_update_emotion(text: str, stream_id: str, room_id: str, user_id: str, username: str, entry_id: str):
-                """Background task to analyze emotion and broadcast update"""
-                try:
-                    # Get audio from buffer
-                    audio_array = None
-                    if stream_id in _room_audio_buffers and len(_room_audio_buffers[stream_id]) > 0:
-                        try:
-                            import numpy as np
-                            recent_chunks = _room_audio_buffers[stream_id][-15:]
-                            audio_array = np.concatenate(recent_chunks)
-                            logger.info(f"🎤 Using {len(audio_array)} samples for emotion analysis")
-                        except Exception as e:
-                            logger.warning(f"⚠️ Failed to get audio buffer: {e}")
-                    
-                    # Emotion analysis
-                    emotion = {"emotion": "neutral", "confidence": 0, "scores": {}}
-                    if audio_array is not None and len(audio_array) >= 1600:
-                        try:
-                            from app.services.emotion_analysis import analyze_text_and_audio_combined
-                            emotion = await analyze_text_and_audio_combined(
-                                text=text, audio_array=audio_array,
-                                sample_rate=16000, text_weight=0.6, audio_weight=0.4
-                            )
-                            logger.info(f"🎭 Emotion: {emotion['emotion']} ({emotion.get('confidence', 0):.2f})")
-                        except Exception as e:
-                            logger.warning(f"⚠️ Emotion analysis failed: {e}")
-                    
-                    # Get guidance
-                    guidance = {}
-                    try:
-                        guidance_engine = get_emotion_guidance_engine()
-                        guidance = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                guidance_engine.get_guidance,
-                                emotion["emotion"], text, emotion.get("confidence", 0),
-                                context={"username": username, "room_id": room_id, "speaker": user_id}
-                            ),
-                            timeout=3.0
-                        )
-                        logger.info(f"✅ Got emotion guidance")
-                    except asyncio.TimeoutError:
-                        logger.warning(f"⚠️ Guidance timeout")
-                    except Exception as e:
-                        logger.warning(f"⚠️ Guidance failed: {e}")
-                    
-                    # Broadcast emotion update WITH entry_id
-                    await room_manager.broadcast_to_room(room_id, {
-                        "type": "emotion_update",
-                        "entry_id": entry_id,  # CRITICAL: Frontend needs this to find the transcript
-                        "user_id": user_id,
-                        "username": username,
-                        "text": text,
-                        "emotion": emotion["emotion"],
-                        "confidence": emotion.get("confidence", 0),
-                        "emotion_confidence": emotion.get("confidence", 0),
-                        "emotion_guidance": guidance,
-                        "timestamp": get_ist_timestamp()
-                    })
-                    logger.info(f"📡 Broadcast emotion update for {username} (entry_id: {entry_id[:12]}...)")
-                    
-                except Exception as e:
-                    logger.error(f"❌ Error in emotion analysis: {e}", exc_info=True)
+            # Note: Emotion analysis is now handled automatically by AsyncEmotionProcessor
+            # when transcript bars are finalized in the continuous transcript manager
             
             service_name = "Faster-Whisper" if has_whisper else "Deepgram"
             logger.info(f"🎙️ About to start {service_name} stream for {username} (stream: {stream_id})")
@@ -1335,15 +1304,15 @@ async def meeting_websocket(
             logger.error(f"Failed to send historical transcripts to {username}: {e}", exc_info=True)
 
         # Main receive loop with extended timeout for long meetings
-        # Timeout extended to 180 seconds (3 minutes) to support 30+ minute meetings
+        # Timeout set to 3600 seconds (1 hour) to support long meetings
         while True:
             try:
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=180)
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=3600)
             except asyncio.TimeoutError:
-                # send keep-alive ping after 3 minutes of inactivity
+                # send keep-alive ping after 1 hour of inactivity
                 await safe_send(websocket, {
                     "type": "ping_timeout",
-                    "message": "Keep-alive: No message received within 180 seconds.",
+                    "message": "Keep-alive: No message received within 1 hour.",
                     "timestamp": datetime.utcnow().isoformat()
                 }, "ping_timeout")
                 continue
@@ -1465,6 +1434,18 @@ async def meeting_websocket(
                 if current_participant and current_participant.websocket == websocket:
                     await room_manager.leave_room(room_id, user_id)
                     logger.info(f"👋 {username} left {room_id}")
+                    
+                    # ✅ Explicitly check if room is now empty and clean up immediately
+                    room_after_leave = room_manager.rooms.get(room_id)
+                    if room_after_leave and len(room_after_leave.participants) == 0:
+                        logger.info(f"🧹 Room {room_id} is empty after {username} left - cleaning up immediately")
+                        # Room status is already set to ENDED in leave_room, but ensure cleanup
+                        await room_manager.broadcast_to_room(room_id, {
+                            "type": "room_empty",
+                            "room_id": room_id,
+                            "message": "All participants have left",
+                            "timestamp": get_ist_timestamp()
+                        })
                 else:
                     logger.info(f"🔄 {username}'s old connection closed (replaced by new connection)")
             else:

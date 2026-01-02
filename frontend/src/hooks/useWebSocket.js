@@ -7,6 +7,7 @@ const PING_INTERVAL = 60000;
 
 export const useWebSocket = (roomId, userId, username, password, role = 'participant') => {
     const [isConnected, setIsConnected] = useState(false);
+    const [isServerReady, setIsServerReady] = useState(false);
     const [transcripts, setTranscripts] = useState([]);
     const [participants, setParticipants] = useState([]);
     const [activeSpeakerId, setActiveSpeakerId] = useState(null);
@@ -72,6 +73,7 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                 try {
                     const data = JSON.parse(event.data);
                     console.log('🔍 WebSocket received:', data);
+                    console.log('📊 Message type:', data.type, '| Action:', data.action, '| Bar:', !!data.bar);
                     setLastMessage(data);
 
                     switch (data.type) {
@@ -125,6 +127,64 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                                 console.log('🆕 New transcript entry with emotion:', data.emotion);
                                 return [data, ...prev].slice(0, 100);
                             });
+                            break;
+                        
+                        case 'transcript_bar':
+                            console.log('📝 Transcript bar received:', {
+                                action: data.action,
+                                bar_id: data.bar?.id,
+                                speaker: data.bar?.speaker_name,
+                                text: data.bar?.text?.substring(0, 50),
+                                status: data.bar?.status
+                            });
+                            console.log('🔥 FULL BAR DATA:', JSON.stringify(data, null, 2));
+                            
+                            // Handle continuous transcript bars
+                            setTranscripts((prev) => {
+                                console.log('🔄 setTranscripts called | prev length:', prev.length);
+                                const bar = data.bar;
+                                if (!bar) return prev;
+                                
+                                const entry_id = bar.id;
+                                const existingIndex = prev.findIndex(t => t.entry_id === entry_id);
+                                
+                                if (data.action === 'append' && existingIndex !== -1) {
+                                    // Update existing bar
+                                    const updated = [...prev];
+                                    const existing = updated[existingIndex];
+                                    updated[existingIndex] = {
+                                        ...existing,
+                                        text: bar.text,
+                                        confidence: bar.confidence || existing.confidence,
+                                        timestamp: bar.timestamp || existing.timestamp,
+                                        emotion: bar.emotion || existing.emotion,
+                                        emotion_confidence: bar.emotion_confidence ?? existing.emotion_confidence,
+                                        emotion_guidance: bar.emotion_guidance || existing.emotion_guidance,
+                                        is_final: bar.status === 'finalized'
+                                    };
+                                    console.log('📝 Updated transcript bar:', entry_id.substring(0, 8));
+                                    return updated;
+                                } else {
+                                    // Create new bar
+                                    const newEntry = {
+                                        entry_id: entry_id,
+                                        user_id: bar.speaker_id,
+                                        username: bar.speaker_name,
+                                        text: bar.text,
+                                        emotion: bar.emotion || 'neutral',
+                                        emotion_confidence: bar.emotion_confidence || 0,
+                                        emotion_guidance: bar.emotion_guidance || {},
+                                        confidence: bar.confidence || 1.0,
+                                        timestamp: bar.timestamp,
+                                        is_final: bar.status === 'finalized'
+                                    };
+                                    console.log('🆕 New transcript bar:', entry_id.substring(0, 8), '| New entry:', newEntry);
+                                    const newList = [newEntry, ...prev].slice(0, 100);
+                                    console.log('✅ Returning new transcript list, length:', newList.length);
+                                    return newList;
+                                }
+                            });
+                            console.log('✅ Transcript bar case completed');
                             break;
                         
                         case 'emotion_update':
@@ -235,6 +295,7 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
 
                         case 'ready_for_audio':
                             console.log('🎵 Server ready to receive audio - streaming enabled:', data.streaming_enabled);
+                            setIsServerReady(true);
                             break;
 
                         case 'peer_list':
@@ -280,6 +341,7 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
             wsRef.current.onclose = (event) => {
                 console.log('🔌 WebSocket closed:', event.code, event.reason);
                 setIsConnected(false);
+                setIsServerReady(false);
                 isConnectingRef.current = false;
 
                 // Clear ping interval
@@ -389,6 +451,7 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
 
     return {
         isConnected,
+        isServerReady,
         isTranscriptConnected: isConnected, // Same connection handles transcription
         transcripts,
         participants,
