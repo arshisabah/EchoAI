@@ -7,6 +7,7 @@ import logging
 import uuid
 import re  # For word boundary matching in keyword fallback
 from datetime import datetime
+from app.utils.timezone import get_ist_timestamp
 from typing import Dict, List, Optional, Any
 import json
 from app.modules.audio_emotion_analyzer import analyze_audio_emotion
@@ -53,7 +54,7 @@ class EmotionService:
         
         Returns dict with 'emotion', 'confidence', and 'scores'.
         """
-        logger.debug(f"🎭 analyze_text called with text: '{text[:100]}...' (length: {len(text)})")
+        logger.info(f"🎭 [EMOTION] Starting analysis for: '{text[:80]}...'")
         
         if not text.strip():
             logger.debug("⚠️ Empty text provided, returning neutral emotion")
@@ -64,9 +65,9 @@ class EmotionService:
             }
 
         try:
-            logger.debug("📡 Attempting to get OpenAI client...")
+            logger.info("📡 [EMOTION] Getting OpenAI client...")
             client = self._get_client()
-            logger.debug("✅ OpenAI client obtained")
+            logger.info("✅ [EMOTION] OpenAI client ready, making API call...")
             
             emotions_str = ", ".join(self.supported_emotions)
             
@@ -93,7 +94,7 @@ class EmotionService:
                 max_tokens=300
             )
             
-            logger.debug(f"✅ Received response from OpenAI")
+            logger.info(f"✅ [EMOTION] Got OpenAI response successfully")
 
             content = response.choices[0].message.content.strip()
             logger.debug(f"📥 OpenAI response content: {content[:200]}")
@@ -189,8 +190,10 @@ class EmotionService:
             "angry": {
                 "keywords": ["angry", "mad", "furious", "upset", "rage", "outraged", "irritated",
                            "pissed", "annoyed", "infuriated", "disgusted", "hate", "hateful",
-                           "ridiculous", "unacceptable", "damn"],
-                "weight": 0.75
+                           "ridiculous", "unacceptable", "damn", "fuck", "fucking", "shit", "bullshit",
+                           "bastard", "hell", "wtf", "dammit", "crap", "piss off", "screw",
+                           "stupid", "idiot", "moron", "dumb", "asshole", "bitch"],
+                "weight": 0.85
             },
             "frustrated": {
                 "keywords": ["frustrated", "frustrating", "annoyed", "annoying", "stressed", 
@@ -309,7 +312,7 @@ class EmotionService:
                 
             result = await self.analyze_text(text)
             emotions.append({
-                "timestamp": entry.get("timestamp", datetime.utcnow().isoformat()),
+                "timestamp": entry.get("timestamp", get_ist_timestamp()),
                 "speaker": entry.get("speaker", "Unknown"),
                 "emotion": result["emotion"],
                 "confidence": result["confidence"]
@@ -495,3 +498,4 @@ async def analyze_transcript_emotions(entries: List[Dict[str, Any]]) -> Dict[str
         "individual_results": individual_results,
         "session_summary": session_summary
     }
+

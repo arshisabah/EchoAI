@@ -84,15 +84,73 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                                 setParticipants(data.room_info.participants);
                             }
                             break;
+                        
                         case 'final_transcript':
                         case 'live_transcript':
                             console.log('✅ Transcript received:', {
+                                entry_id: data.entry_id,
                                 username: data.username,
-                                text: data.text,
+                                text: data.text?.substring(0, 50),
+                                is_final: data.is_final,
                                 emotion: data.emotion,
-                                timestamp: data.timestamp
+                                has_guidance: !!data.emotion_guidance?.suggestion
                             });
-                            setTranscripts((prev) => [data, ...prev].slice(0, 100));
+                            
+                            // 🚀 INCREMENTAL UPDATES: Update existing entry or create new
+                            setTranscripts((prev) => {
+                                if (data.entry_id) {
+                                    // Check if entry already exists
+                                    const existingIndex = prev.findIndex(t => t.entry_id === data.entry_id);
+                                    
+                                    if (existingIndex !== -1) {
+                                        // Update existing entry (preserve emotion & guidance if not provided)
+                                        const updated = [...prev];
+                                        const existing = updated[existingIndex];
+                                        updated[existingIndex] = {
+                                            ...existing,
+                                            text: data.text,
+                                            is_final: data.is_final,
+                                            confidence: data.confidence || existing.confidence,
+                                            timestamp: data.timestamp || existing.timestamp,
+                                            emotion: data.emotion || existing.emotion,
+                                            emotion_confidence: data.emotion_confidence ?? existing.emotion_confidence,
+                                            emotion_guidance: data.emotion_guidance || existing.emotion_guidance
+                                        };
+                                        console.log('📝 Updated entry:', data.entry_id.substring(0, 8), '| emotion:', updated[existingIndex].emotion);
+                                        return updated;
+                                    }
+                                }
+                                
+                                // New entry
+                                console.log('🆕 New transcript entry with emotion:', data.emotion);
+                                return [data, ...prev].slice(0, 100);
+                            });
+                            break;
+                        
+                        case 'emotion_update':
+                            console.log('🎭 Emotion update received:', {
+                                entry_id: data.entry_id,
+                                emotion: data.emotion,
+                                guidance: data.emotion_guidance
+                            });
+                            
+                            // Update emotion for specific entry only (preserve other entries' guidance)
+                            setTranscripts((prev) => {
+                                const existingIndex = prev.findIndex(t => t.entry_id === data.entry_id);
+                                if (existingIndex !== -1) {
+                                    const updated = [...prev];
+                                    updated[existingIndex] = {
+                                        ...updated[existingIndex],
+                                        emotion: data.emotion,
+                                        emotion_confidence: data.emotion_confidence,
+                                        emotion_guidance: data.emotion_guidance || updated[existingIndex].emotion_guidance
+                                    };
+                                    console.log('🎭 Emotion + guidance updated for entry:', data.entry_id.substring(0, 8));
+                                    return updated;
+                                }
+                                console.warn('⚠️ Entry not found for emotion update:', data.entry_id);
+                                return prev;
+                            });
                             break;
 
                         case 'participant_joined':

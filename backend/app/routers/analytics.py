@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 from app.modules.realtime_store import get_transcript_store
 from app.services.emotion_analysis import get_emotion_service, analyze_transcript_emotions
 from app.services.speaker_identification_service import get_speaker_service
+from app.utils.timezone import get_ist_timestamp
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/analytics", tags=["analytics"])
@@ -38,7 +39,7 @@ async def get_session_analytics(session_id: str):
         return {
             "session_id": session_id,
             **analytics,
-            "generated_at": datetime.utcnow().isoformat()
+            "generated_at": get_ist_timestamp()
         }
         
     except HTTPException:
@@ -88,7 +89,7 @@ async def get_detailed_analytics(session_id: str):
             "speaker_patterns": speaker_patterns,
             "conversation_metrics": conversation_metrics,
             "total_entries": len(transcript_entries),
-            "generated_at": datetime.utcnow().isoformat()
+            "generated_at": get_ist_timestamp()
         }
         
     except HTTPException:
@@ -123,7 +124,7 @@ async def get_emotion_analytics(session_id: str):
         return {
             "session_id": session_id,
             "emotion_analysis": emotion_results,
-            "analyzed_at": datetime.utcnow().isoformat()
+            "analyzed_at": get_ist_timestamp()
         }
         
     except HTTPException:
@@ -146,7 +147,7 @@ async def get_speaker_analytics(session_id: str):
             "session_id": session_id,
             "speakers": speakers,
             "patterns": patterns,
-            "analyzed_at": datetime.utcnow().isoformat()
+            "analyzed_at": get_ist_timestamp()
         }
         
     except Exception as e:
@@ -183,7 +184,7 @@ async def get_conversation_timeline(session_id: str, limit: int = Query(default=
             "session_id": session_id,
             "timeline": timeline,
             "total_events": len(timeline),
-            "generated_at": datetime.utcnow().isoformat()
+            "generated_at": get_ist_timestamp()
         }
         
     except HTTPException:
@@ -213,7 +214,7 @@ async def get_analytics_summary(session_id: str):
             "total_turns": len(analytics.get("speaker_statistics", {})),
             "speakers": analytics.get("speakers", []),
             "average_confidence": analytics.get("average_confidence", 0),
-            "generated_at": datetime.utcnow().isoformat()
+            "generated_at": get_ist_timestamp()
         }
         
         return summary
@@ -268,7 +269,7 @@ async def compare_sessions(session_ids: List[str] = Query(...)):
                 "total_duration_minutes": total_duration,
                 "average_speakers_per_session": round(avg_speakers, 2)
             },
-            "generated_at": datetime.utcnow().isoformat()
+            "generated_at": get_ist_timestamp()
         }
         
     except HTTPException:
@@ -298,7 +299,7 @@ async def list_all_sessions():
         return {
             "sessions": session_list,
             "total_count": len(session_list),
-            "generated_at": datetime.utcnow().isoformat()
+            "generated_at": get_ist_timestamp()
         }
         
     except Exception as e:

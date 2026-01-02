@@ -12,6 +12,7 @@ Responsibilities:
 import logging
 import uuid
 from datetime import datetime
+from app.utils.timezone import get_ist_timestamp
 from typing import Dict, List, Optional, Any
 import json
 from app.core.config import settings
@@ -166,7 +167,7 @@ class SummaryService:
             return {
                 "id": f"sum_{uuid.uuid4()}",
                 "session_id": session_id,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": get_ist_timestamp(),
                 "mode": mode,
                 "summary": "",
                 "word_count": 0,
@@ -183,7 +184,7 @@ class SummaryService:
             return {
                 "id": f"sum_{uuid.uuid4()}",
                 "session_id": session_id,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": get_ist_timestamp(),
                 "mode": mode,
                 "summary": summary_text,
                 "word_count": len(full_text.split()),
@@ -195,7 +196,7 @@ class SummaryService:
             return {
                 "id": f"sum_{uuid.uuid4()}",
                 "session_id": session_id,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": get_ist_timestamp(),
                 "mode": mode,
                 "summary": "",
                 "word_count": 0,
@@ -270,7 +271,7 @@ class SummaryService:
                 # Add IDs and timestamps
                 for item in action_items:
                     item["id"] = str(uuid.uuid4())
-                    item["extracted_at"] = datetime.utcnow().isoformat()
+                    item["extracted_at"] = get_ist_timestamp()
                     # Ensure required fields exist
                     item.setdefault("action", "")
                     item.setdefault("assignee", "Unassigned")
@@ -337,7 +338,7 @@ class SummaryService:
                 "key_topics": topics_summary,
                 "speaker_statistics": speaker_stats,
                 "total_words": len(full_text.split()),
-                "generated_at": datetime.utcnow().isoformat()
+                "generated_at": get_ist_timestamp()
             }
 
         except Exception as e:
@@ -383,3 +384,4 @@ async def generate_summary(
     """
     service = get_summary_service()
     return await service.generate_structured_summary(transcript_chunks, session_id, mode)
+

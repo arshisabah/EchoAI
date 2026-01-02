@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Set, Any
 from dataclasses import dataclass, asdict
 from enum import Enum
 from starlette.websockets import WebSocketState
+from app.utils.timezone import get_ist_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -272,7 +273,7 @@ class MeetingRoomManager:
                 "username": username,
                 "role": role.value,
                 "participant_count": len(room.participants),
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": get_ist_timestamp(),
                 "participants": [p.to_dict() for p in room.participants.values()]
             }, exclude_user_id=user_id)
                         
@@ -300,7 +301,7 @@ class MeetingRoomManager:
                     "type": "participant_left",
                     "user_id": user_id,
                     "username": participant.username,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": get_ist_timestamp(),
                     "participant_count": len(room.participants),
                     "participants": [p.to_dict() for p in room.participants.values()],
                     "room_status": room.status.value
@@ -328,7 +329,7 @@ class MeetingRoomManager:
                 await self.broadcast_to_room(room_id, {
                     "type": "room_ended",
                     "room_id": room_id,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": get_ist_timestamp()
                 })
     
     async def broadcast_to_room(
@@ -400,7 +401,9 @@ class MeetingRoomManager:
         text: str,
         emotion: str,
         confidence: float,
-        emotion_guidance: Dict[str, Any]
+        emotion_guidance: Dict[str, Any],
+        is_final: bool = True,
+        entry_id: str = None
     ):
         """
         Broadcast a transcript entry to all participants.
@@ -413,6 +416,8 @@ class MeetingRoomManager:
             emotion: Detected emotion
             confidence: Confidence score
             emotion_guidance: Guidance for responding to this emotion
+            is_final: Whether this is a final transcript
+            entry_id: Unique identifier for tracking this transcript bar
         """
         logger.info(f"📡 broadcast_transcript called for room {room_id}, user {username}")
         
@@ -420,20 +425,28 @@ class MeetingRoomManager:
         if not room:
             logger.error(f"❌ Room {room_id} not found in rooms dict")
             return
+        
+        # Generate entry_id if not provided
+        if entry_id is None:
+            import uuid
+            entry_id = f"{user_id}_{room_id}_{uuid.uuid4().hex[:8]}"
+        
         message_id = f"transcript_{user_id}_{datetime.utcnow().timestamp():.0f}"
         # ✅ FIX: Ensure message format matches frontend expectations
         message = {
             "type": "live_transcript",
+            "entry_id": entry_id,  # CRITICAL: Frontend needs this for updates
             "user_id": user_id,
             "username": username,
             "text": text,
             "emotion": emotion,
             "confidence": confidence,
-            "emotion_guidance": emotion_guidance ,
-            "is_final": True,
-            "partial": False,
-            "message_id": f"{user_id}_{room_id}_final",
-            "timestamp": datetime.utcnow().isoformat()
+            "emotion_confidence": 0.0,
+            "emotion_guidance": emotion_guidance,
+            "is_final": is_final,
+            "partial": not is_final,
+            "message_id": message_id,
+            "timestamp": get_ist_timestamp()
         }
         
         logger.info(f"📤 Broadcasting transcript to {len(room.participants)} participants: '{text[:50]}...'")
@@ -461,7 +474,7 @@ class MeetingRoomManager:
             "type": "active_speaker",
             "user_id": user_id,
             "username": username,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": get_ist_timestamp()
         })
     async def update_participant_state(
             self,
@@ -503,7 +516,7 @@ class MeetingRoomManager:
             "emotion_state": participant.emotion_state,
             "is_video_on": participant.is_video_on,   # 🔹 New
             "is_audio_on": participant.is_audio_on,   # 🔹 New
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": get_ist_timestamp()
         })
 
     
@@ -538,7 +551,7 @@ class MeetingRoomManager:
         await self.broadcast_to_room(room_id, {
             "type": "room_ended",
             "ended_by": ended_by,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": get_ist_timestamp()
         })
         
         # Close all connections

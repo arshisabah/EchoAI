@@ -7,6 +7,7 @@ import time
 import logging
 import psutil
 from datetime import datetime
+from app.utils.timezone import get_ist_timestamp
 from typing import Dict, Any
 from collections import defaultdict
 from threading import Lock
@@ -193,7 +194,7 @@ class HealthChecker:
         
         return {
             "status": overall_status,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": get_ist_timestamp(),
             "components": {
                 "transcription": transcription,
                 "emotion": emotion,
@@ -217,7 +218,7 @@ class AlertManager:
             "level": level,
             "message": message,
             "details": details or {},
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": get_ist_timestamp()
         }
         
         with self._lock:
@@ -299,3 +300,4 @@ def check_system_resources():
             "Low disk space",
             {"disk_percent": disk_percent}
         )
+

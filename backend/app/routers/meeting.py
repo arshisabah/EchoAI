@@ -32,6 +32,7 @@ from app.services.audio_utils import bytes_to_numpy
 from app.modules.realtime_store import get_transcript_store
 from app.modules.audio_recorder import get_or_create_recorder, get_recorder, delete_recorder
 from app.services.room_diarization_service import get_room_diarization_service
+from app.utils.timezone import get_ist_timestamp
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/meeting", tags=["Multi-User Meetings"])
@@ -862,14 +863,16 @@ async def meeting_websocket(
             await websocket.close()
             return
 
-        # If user already connected, close old socket and remove record
+        # If user already connected, remove from room first (prevent cleanup), then close socket
         if existing_room and user_id in existing_room.participants:
             old_participant = existing_room.participants[user_id]
+            # Remove from participants BEFORE closing to prevent finally block from cleaning up room
+            existing_room.participants.pop(user_id, None)
+            logger.info(f"🔄 Replacing existing connection for {user_id} in {room_id}")
             try:
                 await old_participant.websocket.close()
-            except Exception:
-                logger.debug(f"Failed to close old websocket for {user_id}", exc_info=True)
-            existing_room.participants.pop(user_id, None)
+            except Exception as e:
+                logger.debug(f"Failed to close old websocket for {user_id}: {e}", exc_info=True)
 
         # Determine actual role server-side (trust created_by)
         room_for_role_check = room_manager.rooms.get(room_id)
@@ -900,7 +903,8 @@ async def meeting_websocket(
         logger.info(f"   - USE_ROOM_DIARIZATION: {getattr(settings, 'USE_ROOM_DIARIZATION', False)}")
         logger.info(f"   - DEEPGRAM_API_KEY exists: {bool(settings.DEEPGRAM_API_KEY)}")
         logger.info(f"   - orchestrator.use_streaming: {orchestrator.use_streaming}")
-        logger.info(f"   - orchestrator.deepgram_service exists: {orchestrator.deepgram_service is not None}")
+        logger.info(f"   - whisper_service exists: {getattr(orchestrator, 'whisper_service', None) is not None}")
+        logger.info(f"   - deepgram_service exists: {getattr(orchestrator, 'deepgram_service', None) is not None}")
 
 
         # Check if we should use room-level diarization or per-user streaming
@@ -912,15 +916,21 @@ async def meeting_websocket(
         logger.info(f"   - use_room_diarization: {use_room_diarization}")
         logger.info(f"   - orchestrator.use_streaming: {orchestrator.use_streaming}")
 
+        # Safe checks for service attributes
+        has_whisper = hasattr(orchestrator, 'whisper_service') and orchestrator.whisper_service
+        has_deepgram = hasattr(orchestrator, 'deepgram_service') and orchestrator.deepgram_service
+
         if use_room_diarization and orchestrator.use_streaming:
             logger.info(f"🎙️ BRANCH: Room-level diarization mode")
-        elif orchestrator.use_streaming and orchestrator.deepgram_service:
-            logger.info(f"🎙️ BRANCH: Per-user streaming mode")
-            logger.info(f"   - About to initialize Deepgram for {username}")
+        elif orchestrator.use_streaming and (has_whisper or has_deepgram):
+            service_name = "Faster-Whisper" if has_whisper else "Deepgram"
+            logger.info(f"🎙️ BRANCH: Per-user streaming mode ({service_name})")
+            logger.info(f"   - About to initialize {service_name} for {username}")
         else:
             logger.info(f"🎙️ BRANCH: Legacy mode (no streaming)")
             logger.info(f"   - orchestrator.use_streaming = {orchestrator.use_streaming}")
-            logger.info(f"   - orchestrator.deepgram_service = {orchestrator.deepgram_service}")
+            logger.info(f"   - has_whisper_service = {has_whisper}")
+            logger.info(f"   - has_deepgram_service = {has_deepgram}")
         
         if use_room_diarization and orchestrator.use_streaming:
             # Room-level diarization mode (mixed stream with speaker identification)
@@ -1036,10 +1046,11 @@ async def meeting_websocket(
                 else:
                     logger.info(f"✅ Room diarization already active for {room_id}")
         
-        elif orchestrator.use_streaming and orchestrator.deepgram_service:
-            # Per-user streaming mode (original implementation)
+        elif orchestrator.use_streaming and (has_whisper or has_deepgram):
+            # Per-user streaming mode (Faster-Whisper or Deepgram)
+            service_name = "Faster-Whisper" if has_whisper else "Deepgram"
             stream_id = f"{room_id}_{user_id}"
-            logger.info(f"🎙️ Initializing per-user Deepgram stream for {username} (stream: {stream_id})")
+            logger.info(f"🎙️ Initializing per-user {service_name} stream for {username} (stream: {stream_id})")
             
             # Initialize audio buffer for this user's stream
             if stream_id not in _room_audio_buffers:
@@ -1051,56 +1062,98 @@ async def meeting_websocket(
             current_username = username
             current_room_id = room_id
             current_stream_id = stream_id
+            # Entry ID tracking for emotion updates
+            current_entry_id = None
             
             async def on_deepgram_transcript(result: dict):
                 """Handle transcript results from Deepgram streaming"""
+                nonlocal current_entry_id
                 try:
                     text = result.get('text', '').strip()
                     if not text:
                         return
                     
-                    is_final = result.get('is_final', True)
+                    is_final = result.get('is_final', False)
                     confidence = result.get('confidence', 1.0)
+                    create_new_bar = result.get('create_new_bar', False)
+                    
+                    # Generate or maintain entry_id
+                    if is_final or current_entry_id is None:
+                        import uuid
+                        current_entry_id = f"{current_user_id}_{current_room_id}_{uuid.uuid4().hex[:8]}"
+                        logger.info(f"🆕 New entry_id: {current_entry_id}")
                     
                     # Use username directly (each user has their own stream)
                     display_name = current_username
                     
-                    logger.info(f"📝 Deepgram transcript for {display_name}: '{text[:50]}...' (final: {is_final})")
+                    logger.info(f"📝 Transcript for {display_name}: '{text[:50]}...' (is_final={is_final}, new_bar={create_new_bar}, entry_id={current_entry_id[:12]}...)")
                     
-                    # For partial results, skip broadcasting (only show final transcripts)
-                    if not is_final:
-                        logger.debug(f"⏭️ Skipping partial transcript for {display_name}: '{text[:30]}'")
-                        return
+                    # ALWAYS broadcast immediately for real-time display
+                    await room_manager.broadcast_transcript(
+                        room_id=current_room_id,
+                        user_id=current_user_id,
+                        username=display_name,
+                        text=text,
+                        emotion="neutral",
+                        confidence=0.0,
+                        emotion_guidance={},
+                        is_final=is_final,  # False = append, True = new bar
+                        entry_id=current_entry_id
+                    )
                     
-                    # For final results, perform full processing with emotion analysis
-                    # Get audio from buffer (use stream_id from parent scope)
+                    # ALWAYS run emotion analysis in background (for all transcripts)
+                    logger.info(f"🎭 Starting background emotion analysis for: '{text[:30]}...'")
+                    asyncio.create_task(analyze_and_update_emotion(
+                        text=text,
+                        stream_id=current_stream_id,
+                        room_id=current_room_id,
+                        user_id=current_user_id,
+                        username=display_name,
+                        entry_id=current_entry_id
+                    ))
+                    
+                    # Store transcript
+                    if is_final:
+                        store = get_transcript_store()
+                        entry_obj = await store.add_transcript_entry(
+                            meeting_id=current_room_id,
+                            speaker=current_user_id,
+                            text=text,
+                            confidence=confidence
+                        )
+                        logger.info(f"✅ Stored final transcript for {display_name}")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error in transcript callback: {e}", exc_info=True)
+            
+            async def analyze_and_update_emotion(text: str, stream_id: str, room_id: str, user_id: str, username: str, entry_id: str):
+                """Background task to analyze emotion and broadcast update"""
+                try:
+                    # Get audio from buffer
                     audio_array = None
-                    if current_stream_id in _room_audio_buffers and len(_room_audio_buffers[current_stream_id]) > 0:
+                    if stream_id in _room_audio_buffers and len(_room_audio_buffers[stream_id]) > 0:
                         try:
                             import numpy as np
-                            # Use last 15 chunks (about 1-2 seconds)
-                            recent_chunks = _room_audio_buffers[current_stream_id][-15:]
+                            recent_chunks = _room_audio_buffers[stream_id][-15:]
                             audio_array = np.concatenate(recent_chunks)
                             logger.info(f"🎤 Using {len(audio_array)} samples for emotion analysis")
                         except Exception as e:
                             logger.warning(f"⚠️ Failed to get audio buffer: {e}")
                     
-                    # Emotion analysis (only on final results)
+                    # Emotion analysis
                     emotion = {"emotion": "neutral", "confidence": 0, "scores": {}}
-                    if audio_array is not None and len(audio_array) >= 1600:  # At least 0.1 seconds
+                    if audio_array is not None and len(audio_array) >= 1600:
                         try:
                             from app.services.emotion_analysis import analyze_text_and_audio_combined
                             emotion = await analyze_text_and_audio_combined(
                                 text=text, audio_array=audio_array,
                                 sample_rate=16000, text_weight=0.6, audio_weight=0.4
                             )
-                            logger.info(f"🎭 Emotion detected: {emotion['emotion']} (confidence: {emotion.get('confidence', 0):.2f})")
+                            logger.info(f"🎭 Emotion: {emotion['emotion']} ({emotion.get('confidence', 0):.2f})")
                         except Exception as e:
                             logger.warning(f"⚠️ Emotion analysis failed: {e}")
-                    else:
-                        logger.info(f"⚠️ No audio for emotion analysis (buffer has {len(_room_audio_buffers.get(current_stream_id, []))} chunks)")
                     
-                    # Get emotion guidance (with timeout to prevent blocking broadcasts)
+                    # Get guidance
                     guidance = {}
                     try:
                         guidance_engine = get_emotion_guidance_engine()
@@ -1108,73 +1161,67 @@ async def meeting_websocket(
                             asyncio.to_thread(
                                 guidance_engine.get_guidance,
                                 emotion["emotion"], text, emotion.get("confidence", 0),
-                                context={"username": current_username, "room_id": current_room_id, "speaker": current_user_id}
+                                context={"username": username, "room_id": room_id, "speaker": user_id}
                             ),
-                            timeout=2.0  # 2 second timeout to prevent OpenAI delays
+                            timeout=3.0
                         )
-                        logger.debug(f"✅ Got emotion guidance for {current_username}")
+                        logger.info(f"✅ Got emotion guidance")
                     except asyncio.TimeoutError:
-                        logger.warning(f"⚠️ Guidance generation timeout, broadcasting without guidance")
-                        guidance = {}
+                        logger.warning(f"⚠️ Guidance timeout")
                     except Exception as e:
-                        logger.warning(f"⚠️ Guidance generation failed: {e}, broadcasting without guidance")
-                        guidance = {}
+                        logger.warning(f"⚠️ Guidance failed: {e}")
                     
-                    # Broadcast final transcript with emotion
-                    await room_manager.broadcast_transcript(
-                        room_id=current_room_id,
-                        user_id=current_user_id,
-                        username=display_name,
-                        text=text,
-                        emotion=emotion["emotion"],
-                        confidence=emotion.get("confidence", 0),
-                        emotion_guidance=guidance
-                    )
-                    
-                    # Store transcript
-                    store = get_transcript_store()
-                    entry_obj = await store.add_transcript_entry(
-                        meeting_id=current_room_id,
-                        speaker=current_user_id,
-                        text=text,
-                        confidence=confidence
-                    )
-                    
-                    if entry_obj:
-                        entry_obj.emotions = {
-                            "emotion": emotion["emotion"],
-                            "confidence": emotion.get("confidence", 0),
-                            "scores": emotion.get("scores", {})
-                        }
-                    
-                    logger.info(f"✅ Final transcript processed for {display_name}: '{text[:60]}' | Emotion: {emotion['emotion']}")
+                    # Broadcast emotion update WITH entry_id
+                    await room_manager.broadcast_to_room(room_id, {
+                        "type": "emotion_update",
+                        "entry_id": entry_id,  # CRITICAL: Frontend needs this to find the transcript
+                        "user_id": user_id,
+                        "username": username,
+                        "text": text,
+                        "emotion": emotion["emotion"],
+                        "confidence": emotion.get("confidence", 0),
+                        "emotion_confidence": emotion.get("confidence", 0),
+                        "emotion_guidance": guidance,
+                        "timestamp": get_ist_timestamp()
+                    })
+                    logger.info(f"📡 Broadcast emotion update for {username} (entry_id: {entry_id[:12]}...)")
                     
                 except Exception as e:
-                    logger.error(f"❌ Error processing Deepgram transcript: {e}", exc_info=True)
+                    logger.error(f"❌ Error in emotion analysis: {e}", exc_info=True)
             
-            logger.info(f"🎙️ About to start Deepgram stream for {username} (stream: {stream_id})")
+            service_name = "Faster-Whisper" if has_whisper else "Deepgram"
+            logger.info(f"🎙️ About to start {service_name} stream for {username} (stream: {stream_id})")
 
         try:
-            success = await orchestrator.deepgram_service.start_stream(
-                session_id=stream_id,
-                on_transcript=on_deepgram_transcript,
-                language="en",
-                model="nova-2",
-                smart_format=True,
-                interim_results=True,
-                diarize=False  # We're using user_id instead
-            )
+            if has_whisper:
+                # Use Faster-Whisper (local, free, unlimited)
+                success = await orchestrator.whisper_service.start_stream(
+                    session_id=stream_id,
+                    on_transcript=on_deepgram_transcript
+                )
+            elif has_deepgram:
+                # Fallback to Deepgram
+                success = await orchestrator.deepgram_service.start_stream(
+                    session_id=stream_id,
+                    on_transcript=on_deepgram_transcript,
+                    language="en",
+                    model="nova-2",
+                    smart_format=True,
+                    interim_results=True,
+                    diarize=False
+                )
+            else:
+                success = False
             
             logger.info(f"🔧 start_stream() returned: {success} for {username}")
             
             if success:
-                logger.info(f"✅ Deepgram stream started for {username} (stream: {stream_id})")
-                logger.info(f"🔍 Active connections: {list(orchestrator.deepgram_service.connections.keys())}")
+                logger.info(f"✅ {service_name} stream started for {username} (stream: {stream_id})")
             else:
-                logger.error(f"❌ Failed to start Deepgram stream for {username}, falling back to legacy mode")
+                logger.error(f"❌ Failed to start {service_name} stream for {username}, falling back to legacy mode")
                 
         except Exception as e:
-            logger.error(f"❌ Exception starting Deepgram stream for {username}: {e}", exc_info=True)
+            logger.error(f"❌ Exception starting streaming transcription for {username}: {e}", exc_info=True)
             success = False
                 
         # Start recording if this is the first participant
@@ -1374,15 +1421,21 @@ async def meeting_websocket(
     except Exception as e:
         logger.error(f"WebSocket error for {username} in {room_id}: {e}", exc_info=True)
     finally:
-        # Clean up Deepgram stream if streaming mode is enabled
+        # Clean up streaming transcription (Faster-Whisper or Deepgram)
         try:
             orchestrator = get_orchestrator_service()
-            if orchestrator.use_streaming and orchestrator.deepgram_service:
-                stream_id = f"{room_id}_{user_id}"
+            stream_id = f"{room_id}_{user_id}"
+            
+            # Try Faster-Whisper first (preferred)
+            if orchestrator.use_streaming and hasattr(orchestrator, 'whisper_service') and orchestrator.whisper_service:
+                await orchestrator.whisper_service.stop_stream(stream_id)
+                logger.info(f"🔌 Stopped Faster-Whisper stream for {username} in {room_id}")
+            # Fallback to Deepgram
+            elif orchestrator.use_streaming and hasattr(orchestrator, 'deepgram_service') and orchestrator.deepgram_service:
                 await orchestrator.deepgram_service.stop_stream(stream_id)
                 logger.info(f"🔌 Stopped Deepgram stream for {username} in {room_id}")
-        except Exception as dg_err:
-            logger.debug(f"Error stopping Deepgram stream: {dg_err}")
+        except Exception as stream_err:
+            logger.debug(f"Error stopping transcription stream: {stream_err}")
         
         # Clean up room diarization if this is the last participant
         try:
@@ -1403,9 +1456,19 @@ async def meeting_websocket(
         except Exception as diar_err:
             logger.debug(f"Error stopping room diarization: {diar_err}")
         
-        # ✅ FIX: Only call leave_room once in finally block to avoid multiple calls
+        # 🔄 FIX: Only call leave_room if this is still the active connection (not replaced)
         try:
-            await room_manager.leave_room(room_id, user_id)
+            room = room_manager.rooms.get(room_id)
+            if room and user_id in room.participants:
+                # Only leave if this is still the active connection for this user
+                current_participant = room.participants.get(user_id)
+                if current_participant and current_participant.websocket == websocket:
+                    await room_manager.leave_room(room_id, user_id)
+                    logger.info(f"👋 {username} left {room_id}")
+                else:
+                    logger.info(f"🔄 {username}'s old connection closed (replaced by new connection)")
+            else:
+                logger.debug(f"User {user_id} already removed from room {room_id}")
         except Exception as leave_err:
             logger.debug(f"Error during leave_room cleanup: {leave_err}")
 
@@ -1437,7 +1500,9 @@ async def process_audio(room_id, user_id, username, message, room_manager, webso
             
             # Check if streaming mode is active
             orchestrator = get_orchestrator_service()
-            if orchestrator.use_streaming and orchestrator.deepgram_service:
+            has_streaming = (hasattr(orchestrator, 'whisper_service') and orchestrator.whisper_service) or \
+                           (hasattr(orchestrator, 'deepgram_service') and orchestrator.deepgram_service)
+            if orchestrator.use_streaming and has_streaming:
                 stream_id = f"{room_id}_{user_id}"
                 # Initialize buffer if needed
                 if stream_id not in _room_audio_buffers:

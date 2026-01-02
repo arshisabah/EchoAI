@@ -5,13 +5,29 @@ import { meetingAPI } from '../../services/api';
 
 const TranscriptPanel = ({ transcripts, onExport, roomId }) => {
   const transcriptEndRef = useRef(null);
+  const containerRef = useRef(null);
   const dropdownRef = useRef(null);
   const [showFormatMenu, setShowFormatMenu] = useState(false);
   const [downloading, setDownloading] = useState(null);
+  const [userScrolled, setUserScrolled] = useState(false);
 
+  // Auto-scroll only if user is near bottom
   useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [transcripts]);
+    const container = containerRef.current;
+    if (!container || userScrolled) return;
+    
+    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+    if (isNearBottom) {
+      transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [transcripts, userScrolled]);
+
+  // Detect user scrolling up
+  const handleScroll = (e) => {
+    const container = e.target;
+    const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 50;
+    setUserScrolled(!isAtBottom);
+  };
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -126,7 +142,7 @@ const TranscriptPanel = ({ transcripts, onExport, roomId }) => {
         )}
       </div>
 
-      <div className="transcript-content">
+      <div className="transcript-content" ref={containerRef} onScroll={handleScroll}>
         {transcripts.length === 0 ? (
           <div className="transcript-empty">
             <FileText size={48} />
@@ -135,7 +151,10 @@ const TranscriptPanel = ({ transcripts, onExport, roomId }) => {
           </div>
         ) : (
           transcripts.map((entry, index) => (
-            <div key={index} className="transcript-entry">
+            <div 
+              key={entry.entry_id || index} 
+              className={`transcript-entry ${!entry.is_final ? 'partial' : ''}`}
+            >
               <div className="transcript-entry-header">
                 <div className="speaker-info">
                   <div className="speaker-avatar">
@@ -144,6 +163,9 @@ const TranscriptPanel = ({ transcripts, onExport, roomId }) => {
                   <span className="speaker-name">
                     {entry.username || entry.speaker}
                   </span>
+                  {!entry.is_final && (
+                    <span className="partial-indicator" title="Transcribing...">●</span>
+                  )}
                 </div>
                 <span className="transcript-time">
                   {formatDistanceToNow(new Date(entry.timestamp), { addSuffix: true })}
@@ -152,20 +174,27 @@ const TranscriptPanel = ({ transcripts, onExport, roomId }) => {
 
               <div className="transcript-text">{entry.text}</div>
 
-              <div className="transcript-meta">
-                <div 
-                  className="emotion-badge"
-                  style={{ 
-                    backgroundColor: `${getEmotionColor(entry.emotion)}15`,
-                    color: getEmotionColor(entry.emotion)
-                  }}
-                >
-                  {entry.emotion}
+              {entry.is_final !== false && (
+                <div className="transcript-meta">
+                  <div 
+                    className="emotion-badge"
+                    style={{ 
+                      backgroundColor: `${getEmotionColor(entry.emotion)}15`,
+                      color: getEmotionColor(entry.emotion)
+                    }}
+                  >
+                    {entry.emotion}
+                  </div>
+                  <span className="confidence-badge">
+                    {((entry.emotion_confidence || entry.confidence || 1) * 100).toFixed(0)}% confident
+                  </span>
+                  {entry.emotion_guidance && entry.emotion_guidance.suggestion && (
+                    <div className="emotion-guidance" style={{ marginTop: '8px', fontSize: '0.85em', color: '#64748b' }}>
+                      💡 {entry.emotion_guidance.suggestion}
+                    </div>
+                  )}
                 </div>
-                <span className="confidence-badge">
-                  {(entry.confidence * 100).toFixed(0)}% confident
-                </span>
-              </div>
+              )}
             </div>
           ))
         )}

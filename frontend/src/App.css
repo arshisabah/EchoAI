@@ -1152,6 +1152,39 @@ body {
   background: #f8fafc;
   border-radius: 0.75rem;
   border-left: 3px solid #3b82f6;
+  transition: all 0.3s ease;
+}
+
+.transcript-entry.partial {
+  border-left-color: #f59e0b;
+  background: linear-gradient(to right, rgba(245, 158, 11, 0.1), #f8fafc);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+.partial-indicator {
+  display: inline-block;
+  color: #f59e0b;
+  font-size: 0.7rem;
+  margin-left: 0.5rem;
+  animation: blink 1s ease-in-out infinite;
+}
+
+@keyframes blink {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
 }
 
 .transcript-entry-header {

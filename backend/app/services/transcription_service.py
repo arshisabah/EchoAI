@@ -9,6 +9,7 @@ import logging
 import time
 import os
 from datetime import datetime
+from app.utils.timezone import get_ist_timestamp
 from typing import Optional, List, Dict, Any, Tuple
 import torch
 import numpy as np
@@ -58,39 +59,8 @@ class TranscriptionService:
             self.model_type = "openai_api"
             logger.info("✅ Using OpenAI Whisper API")
             return
-        
-        # Try WhisperX
-        try:
-            import whisperx
-            logger.info("Loading WhisperX model...")
-            
-            # WhisperX doesn't support MPS directly yet, use CPU on Apple Silicon
-            whisper_device = self.device if self.device != "mps" else "cpu"
-            compute_type = "float32" if whisper_device == "cpu" else "float16"
-            
-            self.model = whisperx.load_model(
-                "tiny", 
-                device=whisper_device, 
-                compute_type=compute_type
-            )
-            self.model_type = "whisperx"
-            logger.info(f"✅ WhisperX loaded on {whisper_device}")
-            return
-        except Exception as e:
-            logger.warning(f"WhisperX not available: {e}")
 
-        # Fallback to standard Whisper
-        try:
-            import whisper
-            logger.info("Loading standard Whisper model...")
-            self.model = whisper.load_model("small", device=self.device)
-            self.model_type = "whisper"
-            logger.info(f"✅ Standard Whisper loaded on {self.device}")
-            return
-        except Exception as e:
-            logger.warning(f"Standard Whisper not available: {e}")
-
-        logger.error("❌ No transcription models available!")
+        logger.warning("⚠️ No OpenAI API key - transcription unavailable for legacy mode (use streaming mode with Faster-Whisper)")
 
     def detect_voice_activity(self, audio_array: np.ndarray, sample_rate: int = 16000) -> bool:
         """
@@ -175,10 +145,6 @@ class TranscriptionService:
         # Route to appropriate method
         if self.model_type == "openai_api":
             return await self._transcribe_openai_api(audio_array, sample_rate, start_time)
-        elif self.model_type == "whisperx":
-            return await self._transcribe_whisperx(audio_array, start_time)
-        elif self.model_type == "whisper":
-            return await self._transcribe_whisper(audio_array, start_time)
         else:
             logger.error(f"❌ No transcription backend available for session {session_id}")
             return []
@@ -254,80 +220,6 @@ class TranscriptionService:
             logger.error(f"❌ OpenAI API transcription failed: {e}", exc_info=True)
             return []
 
-    async def _transcribe_whisperx(
-        self, 
-        audio_array: np.ndarray, 
-        start_time: float
-    ) -> List[ASRResult]:
-        """Transcribe using WhisperX."""
-        def _sync_transcribe():
-            result = self.model.transcribe(audio_array)
-            return result.get("segments", [])
-
-        try:
-            segments = await asyncio.to_thread(_sync_transcribe)
-            results = []
-            
-            for seg in segments:
-                text = seg.get("text", "").strip()
-                if not text:
-                    continue
-                    
-                # ✅ FIX: Use speaker from WhisperX if available, otherwise None
-                results.append(ASRResult(
-                    text=text,
-                    confidence=seg.get("confidence", 1.0),
-                    words=seg.get("words"),
-                    processing_time_ms=(time.time() - start_time) * 1000,
-                    speaker=seg.get("speaker")  # ✅ Changed from hardcoded "Speaker_1"
-                ))
-            
-            return results
-        except Exception as e:
-            logger.error(f"WhisperX transcription failed: {e}")
-            return []
-
-    async def _transcribe_whisper(
-        self, 
-        audio_array: np.ndarray, 
-        start_time: float
-    ) -> List[ASRResult]:
-        """Transcribe using standard Whisper."""
-        def _sync_transcribe():
-            result = self.model.transcribe(
-                audio_array,
-                fp16=(self.device in ["cuda", "mps"]),  # Enable fp16 for both CUDA and MPS
-                language="en",
-                task="transcribe",
-                temperature=0.0,  # Most accurate
-                compression_ratio_threshold=2.4,
-                logprob_threshold=-1.0,
-                no_speech_threshold=0.6,
-                condition_on_previous_text=False,
-                initial_prompt="This is a clear conversation."
-            )
-            return result
-
-        try:
-            result = await asyncio.to_thread(_sync_transcribe)
-            text = result.get("text", "").strip()
-            
-            if not text:
-                return []
-
-            # ✅ FIX: Don't assign speaker - let orchestrator handle it
-            return [ASRResult(
-                text=text,
-                confidence=1.0,
-                words=[],
-                processing_time_ms=(time.time() - start_time) * 1000,
-                speaker=None  # ✅ Changed from "Speaker_1"
-            )]
-        except Exception as e:
-            logger.error(f"Whisper transcription failed: {e}")
-            return []
-
-
 # Singleton
 _transcription_service: Optional[TranscriptionService] = None
 
@@ -395,7 +287,7 @@ async def process_audio_chunk(
             processed_entries.append({
                 "id": str(uuid.uuid4()),
                 "session_id": session_id,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": get_ist_timestamp(),
                 "text": seg.text,
                 "speaker": seg.speaker,  # ✅ Now None or real speaker from WhisperX
                 "confidence": float(seg.confidence),
@@ -412,3 +304,4 @@ async def process_audio_chunk(
     except Exception as e:
         logger.error(f"Error processing audio chunk: {e}", exc_info=True)
         return []
+

@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
     HUGGING_FACE_TOKEN: Optional[str] = os.getenv("HUGGING_FACE_TOKEN")
     DEEPGRAM_API_KEY: Optional[str] = os.getenv("DEEPGRAM_API_KEY")
+    ASSEMBLYAI_API_KEY: Optional[str] = os.getenv("ASSEMBLYAI_API_KEY")
 
     # -------------------------------------------------------------------
     # DATABASE
@@ -43,7 +44,8 @@ class Settings(BaseSettings):
     MODEL_CACHE_DIR: str = os.getenv("MODEL_CACHE_DIR", "./models_cache")
     API_TIMEOUT_SECONDS: int = int(os.getenv("API_TIMEOUT_SECONDS", "60"))
     USE_STREAMING_TRANSCRIPTION: bool = os.getenv("USE_STREAMING_TRANSCRIPTION", "true").lower() == "true"
-    USE_ROOM_DIARIZATION: bool = os.getenv("USE_ROOM_DIARIZATION", "false").lower() == "true"
+    # Room diarization now uses Faster-Whisper + speaker identification (local, no API key needed)
+    USE_ROOM_DIARIZATION: bool = os.getenv("USE_ROOM_DIARIZATION", "true").lower() == "true"
     
     # Transcript merging settings for Google Meet-like experience
     MERGE_SAME_SPEAKER_TRANSCRIPTS: bool = os.getenv("MERGE_SAME_SPEAKER_TRANSCRIPTS", "true").lower() == "true"

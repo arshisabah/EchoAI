@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Set
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from enum import Enum
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -117,9 +118,10 @@ class RealtimeStore:
         meeting_id: str, 
         speaker: str, 
         text: str, 
-        confidence: float = 1.0
+        confidence: float = 1.0,
+        db: Optional[Session] = None
     ) -> TranscriptEntry:
-        """Add a transcript entry."""
+        """Add a transcript entry to both memory and database."""
         async with self._get_lock():
             if meeting_id not in self._sessions:
                 await self.create_session(meeting_id)
@@ -132,7 +134,45 @@ class RealtimeStore:
                 confidence=confidence
             )
             
+            # Save to memory (for real-time access)
             self._transcripts[meeting_id].append(entry)
+            
+            # Save to database (for persistence)
+            if db is not None:
+                try:
+                    # Import from root-level models.py (not models/ directory)
+                    import importlib.util
+                    import os
+                    models_path = os.path.join(os.path.dirname(__file__), '..', 'models.py')
+                    spec = importlib.util.spec_from_file_location("app_models", models_path)
+                    app_models = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(app_models)
+                    Transcript = app_models.Transcript
+                    Meeting = app_models.Meeting
+                    
+                    # Ensure meeting exists or create it
+                    meeting = db.query(Meeting).filter(Meeting.id == int(meeting_id) if meeting_id.isdigit() else -1).first()
+                    if not meeting:
+                        # Try to find by title/room_id or create new
+                        meeting = Meeting(title=f"Meeting {meeting_id}", status="active")
+                        db.add(meeting)
+                        db.flush()  # Get the meeting ID
+                    
+                    # Create transcript record
+                    db_transcript = Transcript(
+                        meeting_id=meeting.id,
+                        speaker=speaker,
+                        content=text,
+                        confidence=int(confidence * 100),  # Convert to percentage
+                        emotion=None  # Can be updated later
+                    )
+                    db.add(db_transcript)
+                    db.commit()
+                    logger.info(f"💾 Saved transcript to DB: meeting={meeting_id}, speaker={speaker}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to save transcript to DB: {e}")
+                    if db:
+                        db.rollback()
             
             session = self._sessions[meeting_id]
             session.participants.add(speaker)
@@ -146,9 +186,49 @@ class RealtimeStore:
         """Get all transcript entries."""
         return self._transcripts.get(meeting_id, [])
     
-    def get_session_transcript(self, session_id: str) -> List[TranscriptEntry]:
-        """Get session transcript (sync version)."""
-        return self._transcripts.get(session_id, [])
+    def get_session_transcript(self, session_id: str, db: Optional[Session] = None) -> List[TranscriptEntry]:
+        """Get session transcript from memory, or database if not in memory."""
+        # First check memory
+        memory_transcripts = self._transcripts.get(session_id, [])
+        if memory_transcripts:
+            return memory_transcripts
+        
+        # If not in memory, try database
+        if db is not None:
+            try:
+                from app.models import Transcript, Meeting
+                
+                meeting = db.query(Meeting).filter(
+                    Meeting.id == int(session_id) if session_id.isdigit() else -1
+                ).first()
+                
+                if not meeting:
+                    return []
+                
+                db_transcripts = db.query(Transcript).filter(
+                    Transcript.meeting_id == meeting.id
+                ).order_by(Transcript.created_at).all()
+                
+                # Convert DB records to TranscriptEntry objects
+                entries = []
+                for idx, t in enumerate(db_transcripts):
+                    entry = TranscriptEntry(
+                        id=f"{session_id}_{idx}",
+                        speaker=t.speaker or "Unknown",
+                        text=t.content or "",
+                        timestamp=t.created_at,
+                        confidence=t.confidence / 100.0 if t.confidence else 1.0
+                    )
+                    entries.append(entry)
+                
+                logger.info(f"📂 Retrieved {len(entries)} transcripts from DB for session {session_id}")
+                return entries
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to retrieve transcripts from DB: {e}")
+                return []
+        
+        return []
     
     def get_session_metadata(self, session_id: str) -> Optional[Dict]:
         """Get session metadata."""

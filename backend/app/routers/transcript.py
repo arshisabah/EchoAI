@@ -12,6 +12,7 @@ from fastapi import (
 
 from app.modules.realtime_store import get_transcript_store
 from app.services.orchestrator_service import get_orchestrator_service
+from app.utils.timezone import get_ist_timestamp
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/transcript", tags=["transcript"])
@@ -189,7 +190,7 @@ async def _handle_orchestrator_result(websocket: WebSocket, result, session_id: 
         await safe_send(websocket, {
             "type": "transcript_entry",
             "data": result,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": get_ist_timestamp()
         })
         return
 
@@ -198,7 +199,7 @@ async def _handle_orchestrator_result(websocket: WebSocket, result, session_id: 
         await safe_send(websocket, {
             "type": "transcript_entry",
             "data": result,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": get_ist_timestamp()
         })
         return
 
@@ -308,3 +309,4 @@ async def delete_session(session_id: str):
     except Exception as e:
         logger.error(f"Failed to delete session: {e}")
         raise HTTPException(500, f"Failed to delete session: {str(e)}")
+

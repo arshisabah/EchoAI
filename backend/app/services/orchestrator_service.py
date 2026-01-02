@@ -23,6 +23,7 @@ from app.services.summary_service import get_summary_service
 from app.services.speaker_identification_service import get_speaker_service
 from app.services.audio_utils import bytes_to_numpy
 from app.modules.realtime_store import get_transcript_store
+from app.utils.timezone import get_ist_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -84,24 +85,18 @@ class OrchestratorService:
         self.active_sessions: Dict[str, SessionData] = {}
         self.audio_buffers: AudioBufferDict = AudioBufferDict()
         
-        # Initialize streaming transcription if enabled
-        self.use_streaming = settings.USE_STREAMING_TRANSCRIPTION and  bool(settings.DEEPGRAM_API_KEY)  
-        self.deepgram_service = None
+        # Initialize streaming transcription (using Faster-Whisper - local, unlimited, free)
+        self.use_streaming = True  # Always use streaming with local model
+        self.assemblyai_service = None
+        self.whisper_service = None
         
-        if self.use_streaming:
-            try:
-                from app.services.deepgram_transcription import get_deepgram_service
-                self.deepgram_service = get_deepgram_service(settings.DEEPGRAM_API_KEY)
-                if self.deepgram_service:
-                    logger.info("✅ Deepgram streaming transcription enabled")
-                else:
-                    logger.warning("⚠️ Deepgram service unavailable, falling back to legacy mode")
-                    self.use_streaming = False
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to initialize Deepgram service: {e}, using legacy mode")
-                self.use_streaming = False
-        else:
-            logger.info("ℹ️ Using legacy transcription mode (buffered)")
+        try:
+            from app.services.faster_whisper_transcription import get_faster_whisper_service
+            self.whisper_service = get_faster_whisper_service()
+            logger.info("✅ Faster-Whisper streaming transcription enabled (local, unlimited, free)")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize Faster-Whisper: {e}", exc_info=True)
+            self.use_streaming = False
 
         logger.info("✅ OrchestratorService initialized")
 
@@ -118,20 +113,8 @@ class OrchestratorService:
         if session_id not in self.active_sessions:
             self.active_sessions[session_id] = SessionData(session_id)
             
-            # Start Deepgram stream if using streaming mode
-            if self.use_streaming and self.deepgram_service:
-                try:
-                    success = await self.deepgram_service.start_stream(
-                        session_id=session_id,
-                        on_transcript=lambda data: asyncio.create_task(self._handle_deepgram_transcript(session_id, data)),
-                        diarize=True
-                    )
-                    if success:
-                        logger.info(f"✅ Deepgram stream started for session: {session_id}")
-                    else:
-                        logger.warning(f"⚠️ Failed to start Deepgram stream for session: {session_id}")
-                except Exception as e:
-                    logger.error(f"❌ Error starting Deepgram stream: {e}", exc_info=True)
+            # Note: Faster-Whisper stream callback is registered by meeting.py, not here
+            # This allows meeting.py to handle broadcasts directly
             
             logger.info(f"🟢 Created new session: {session_id} (streaming: {self.use_streaming})")
         return {
@@ -141,28 +124,31 @@ class OrchestratorService:
         }
 
     # ==========================================================
-    # HANDLE DEEPGRAM TRANSCRIPT CALLBACK
+    # HANDLE FASTER-WHISPER TRANSCRIPT CALLBACK
     # ==========================================================
-    async def _handle_deepgram_transcript(self, session_id: str, transcript_data: Dict[str, Any]):
-        """Handle transcript callback from Deepgram."""
+    async def _handle_whisper_transcript(self, session_id: str, transcript_data: Dict[str, Any]):
+        """Handle transcript callback from Faster-Whisper."""
         try:
-            logger.info(f"📝 Deepgram transcript received for {session_id}: {transcript_data.get('text', '')[:50]}")
+            logger.info(f"📝 Faster-Whisper transcript received for {session_id}: {transcript_data.get('text', '')[:50]}")
             # Process transcript data if needed
-            # This is called by Deepgram service when transcript is ready
+            # This is called by Faster-Whisper service when transcript is ready
         except Exception as e:
-            logger.error(f"❌ Error handling Deepgram transcript: {e}", exc_info=True)
+            logger.error(f"❌ Error handling Faster-Whisper transcript: {e}", exc_info=True)
 
     # ==========================================================
     # PROCESS AUDIO CHUNK - FIXED
     # ==========================================================
     async def process_audio_chunk(self, audio_bytes: bytes, session_id: str, participant_id=None):
         """
-        Process audio chunk using either streaming (Deepgram) or legacy (buffered) mode.
+        Process audio chunk using either streaming (Faster-Whisper) or legacy (buffered) mode.
         """
         # Route to appropriate processing mode
-        if self.use_streaming and self.deepgram_service:
+        logger.info(f"🔀 Routing audio - use_streaming: {self.use_streaming}, whisper_service: {self.whisper_service is not None}")
+        if self.use_streaming and self.whisper_service:
+            logger.info(f"🎯 Using STREAMING mode for {session_id}")
             return await self._process_audio_streaming(audio_bytes, session_id, participant_id)
         else:
+            logger.info(f"🎯 Using LEGACY mode for {session_id}")
             return await self._process_audio_legacy(audio_bytes, session_id, participant_id)
     
     # ==========================================================
@@ -170,10 +156,10 @@ class OrchestratorService:
     # ==========================================================
     async def _process_audio_streaming(self, audio_bytes: bytes, session_id: str, participant_id=None):
         """
-        Process audio using Deepgram streaming - immediate processing without buffering.
+        Process audio using Faster-Whisper streaming - immediate processing without buffering.
         """
         try:
-            logger.debug(f"🎵 [STREAMING] Processing audio - session: {session_id}, participant: {participant_id}, bytes: {len(audio_bytes)}")
+            logger.info(f"🎵 [STREAMING] Processing audio - session: {session_id}, bytes: {len(audio_bytes)}")
             
             # Ensure session exists
             if session_id not in self.active_sessions:
@@ -183,28 +169,27 @@ class OrchestratorService:
             session = self.active_sessions[session_id]
             session.last_activity = datetime.utcnow()
             
-            # Convert audio_bytes to PCM format for Deepgram (int16)
-            # Send raw audio bytes directly to Deepgram (already PCM int16 from frontend)
+            # Send audio to Faster-Whisper
             try:
-                # ✅ FIX 4: Check if connection exists BEFORE sending
-                if session_id not in self.deepgram_service.connections:
-                    logger.error(f"❌ No connection found for {session_id}. Available: {list(self.deepgram_service.connections.keys())}")
+                # Check if Faster-Whisper service is available
+                if not self.whisper_service:
+                    logger.error(f"❌ Faster-Whisper service not initialized")
                     return None
                 
-                logger.debug(f"📤 Sending {len(audio_bytes)} bytes to Deepgram for {session_id}")
-                success = await self.deepgram_service.send_audio(session_id, audio_bytes)
+                logger.info(f"📤 Sending {len(audio_bytes)} bytes to Faster-Whisper for {session_id}")
+                success = await self.whisper_service.send_audio(session_id, audio_bytes)
                 
                 if success:
-                    logger.debug(f"✅ Audio sent successfully to Deepgram")
+                    logger.info(f"✅ Audio sent successfully to Faster-Whisper")
                 else:
-                    logger.warning(f"⚠️ Deepgram send_audio returned False for {session_id}")
+                    logger.warning(f"⚠️ Faster-Whisper send_audio returned False for {session_id}")
                     
             except Exception as e:
-                logger.error(f"❌ Error sending audio to Deepgram: {e}", exc_info=True)
+                logger.error(f"❌ Error sending audio to Faster-Whisper: {e}", exc_info=True)
                 return None
             
             if not success:
-                logger.warning(f"⚠️ Failed to send audio to Deepgram for {session_id}")
+                logger.warning(f"⚠️ Failed to send audio to Faster-Whisper for {session_id}")
                 return None
             
             # Return immediately - transcripts will come via callback
@@ -383,7 +368,7 @@ class OrchestratorService:
                     "id": str(uuid.uuid4()),
                     "session_id": session_id,
                     "participant_id": participant_id,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": get_ist_timestamp(),
                     "text": text,
                     "speaker": speaker,
                     "confidence": r.confidence,
@@ -562,7 +547,7 @@ class OrchestratorService:
                 "summary": summary_result,
                 "entry_count": len(session.transcript_entries),
                 "speaker_count": len(session.speakers),
-                "generated_at": datetime.utcnow().isoformat()
+                "generated_at": get_ist_timestamp()
             }
         except Exception as e:
             logger.error(f"Error generating realtime summary for {session_id}: {e}")

@@ -83,7 +83,10 @@ const MeetingRoom = ({ userInfo }) => {
   };
 
   const togglePanelMaximize = () => {
-    setIsPanelMaximized(!isPanelMaximized);
+    const newState = !isPanelMaximized;
+    setIsPanelMaximized(newState);
+    logger.info(`Panel ${newState ? 'maximized' : 'restored'}`);
+    console.log('Panel maximize toggled:', newState);
   };
 
   const toggleRoomFullscreen = async () => {
