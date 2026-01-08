@@ -11,7 +11,24 @@ class WebRTCService {
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
+        // Add TURN servers for NAT traversal (free public TURN servers)
+        {
+          urls: "turn:openrelay.metered.ca:80",
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
+        {
+          urls: "turn:openrelay.metered.ca:443",
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
+        {
+          urls: "turn:openrelay.metered.ca:443?transport=tcp",
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
       ],
+      iceCandidatePoolSize: 10,
     };
   }
 
@@ -59,12 +76,81 @@ class WebRTCService {
     });
   }
 
-  toggleVideo(enabled) {
+  async toggleVideo(enabled) {
     if (!this.localStream) return;
 
-    this.localStream.getVideoTracks().forEach(track => {
-      track.enabled = enabled;
-    });
+    const videoTracks = this.localStream.getVideoTracks();
+    
+    if (!enabled) {
+      // Turning video OFF - just disable the tracks
+      console.log('📹 Disabling video tracks');
+      videoTracks.forEach(track => {
+        track.enabled = false;
+      });
+      return;
+    }
+    
+    // Turning video ON
+    // Check if we have valid video tracks that can be enabled
+    const hasValidTracks = videoTracks.some(track => 
+      track.readyState === 'live' && !track.enabled
+    );
+    
+    if (hasValidTracks) {
+      // Just enable existing tracks
+      console.log('📹 Re-enabling existing video tracks');
+      videoTracks.forEach(track => {
+        if (track.readyState === 'live') {
+          track.enabled = true;
+        }
+      });
+      return;
+    }
+    
+    // Need to get new video track (tracks are stopped or don't exist)
+    console.log('📹 Getting new video track - existing tracks are stopped or invalid');
+    try {
+      const newVideoStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30 }
+        }
+      });
+      
+      const newVideoTrack = newVideoStream.getVideoTracks()[0];
+      
+      // Remove old video tracks from local stream
+      videoTracks.forEach(track => {
+        this.localStream.removeTrack(track);
+        track.stop();
+      });
+      
+      // Add new video track to local stream
+      this.localStream.addTrack(newVideoTrack);
+      
+      // Update all peer connections with new video track
+      console.log(`🔄 Updating ${this.peerConnections.size} peer connections with new video track`);
+      this.peerConnections.forEach((pc, peerId) => {
+        const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+        if (sender) {
+          sender.replaceTrack(newVideoTrack)
+            .then(() => console.log(`✅ Replaced video track for peer ${peerId}`))
+            .catch(err => console.error(`❌ Failed to replace video track for peer ${peerId}:`, err));
+        } else {
+          // No video sender exists, add the track
+          pc.addTrack(newVideoTrack, this.localStream);
+          console.log(`➕ Added new video track for peer ${peerId}`);
+        }
+      });
+      
+      console.log('✅ Video track successfully recreated and updated');
+      return newVideoTrack;
+      
+    } catch (err) {
+      console.error('❌ Failed to get new video track:', err);
+      throw err;
+    }
   }
 
   //-------------------------------------------------------

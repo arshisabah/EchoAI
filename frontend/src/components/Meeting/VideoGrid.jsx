@@ -6,29 +6,160 @@ const VideoTile = ({ stream, username, isLocal, isMuted, isVideoOff, isActiveSpe
   const videoRef = useRef(null);
 
   useEffect(() => {
-    if (videoRef.current && stream instanceof MediaStream) {
-      if (videoRef.current.srcObject !== stream) {
-        console.log(`📺 Setting video srcObject for ${username}:`, stream.id, 
-                    `video tracks: ${stream.getVideoTracks().length}`, 
-                    `audio tracks: ${stream.getAudioTracks().length}`);
-        videoRef.current.srcObject = stream;
+    console.log(`🔄 Video effect TRIGGERED for ${username}:`, {
+      hasStream: !!stream,
+      streamType: stream?.constructor?.name,
+      isLocal,
+      isMuted
+    });
+    
+    const video = videoRef.current;
+    if (!video) {
+      console.warn(`⚠️ Video ref not ready for ${username}`);
+      return;
+    }
+
+    if (stream instanceof MediaStream) {
+      const videoTracks = stream.getVideoTracks();
+      const trackIds = videoTracks.map(t => t.id).join(',');
+      
+      console.log(`📺 Video effect triggered for ${username}:`, {
+        streamId: stream.id,
+        videoTracks: videoTracks.length,
+        trackIds: trackIds.substring(0, 30),
+        audioTracks: stream.getAudioTracks().length,
+        videoTrackStates: videoTracks.map(t => ({
+          id: t.id.substring(0, 8),
+          enabled: t.enabled,
+          readyState: t.readyState
+        }))
+      });
+      
+      // Always set srcObject to ensure tracks are picked up
+      console.log(`🔄 Setting/updating srcObject for ${username}`);
+      video.srcObject = stream;
+      
+      // Ensure video properties are set
+      video.autoplay = true;
+      video.playsInline = true;
+      if (isLocal) {
+        video.muted = true; // Local video must be muted to prevent echo
       }
+      // Remote video should NOT be muted so we can hear them
+      
+      // Force play with retry logic and timeout
+      const attemptPlay = async (retries = 3) => {
+        for (let i = 0; i < retries; i++) {
+          try {
+            // Wait a bit before attempting to ensure element is in DOM
+            if (i > 0) {
+              await new Promise(resolve => setTimeout(resolve, 100 * i));
+            }
+            
+            // Check if video element still exists and is in the DOM
+            if (!document.contains(video)) {
+              console.warn(`⚠️ Video element for ${username} not in DOM, skipping play attempt`);
+              return;
+            }
+            
+            await video.play();
+            console.log(`✅ Video playing for ${username}`);
+            return;
+          } catch (err) {
+            console.warn(`⚠️ Video play attempt ${i + 1}/${retries} failed for ${username}:`, err.message);
+          }
+        }
+        console.error(`❌ All ${retries} play attempts failed for ${username}`);
+      };
+      
+      // Use setTimeout to ensure render cycle completes
+      setTimeout(() => attemptPlay(), 50);
+      
     } else if (!stream) {
       console.warn(`⚠️ No stream available for ${username}`);
+      if (video.srcObject) {
+        video.srcObject = null;
+      }
+    } else {
+      console.error(`❌ Invalid stream type for ${username}:`, typeof stream);
     }
+  }, [stream, username, isLocal, isMuted]);
+
+  // Monitor stream track changes
+  useEffect(() => {
+    if (!stream || !(stream instanceof MediaStream)) return;
+
+    const handleTrackEvent = (event) => {
+      console.log(`🎵 Track ${event.type} for ${username}:`, event.track.kind, event.track.id);
+      
+      // Force video element update when tracks change
+      if (videoRef.current && event.track.kind === 'video') {
+        if (event.type === 'addtrack') {
+          console.log(`✅ New video track added for ${username}, refreshing video element`);
+          // Set srcObject again to pick up new track
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(err => {
+            console.warn(`⚠️ Failed to play video after track added:`, err);
+          });
+        }
+      }
+    };
+
+    stream.addEventListener('addtrack', handleTrackEvent);
+    stream.addEventListener('removetrack', handleTrackEvent);
+
+    return () => {
+      stream.removeEventListener('addtrack', handleTrackEvent);
+      stream.removeEventListener('removetrack', handleTrackEvent);
+    };
   }, [stream, username]);
+  
+  // Monitor video track enabled state changes
+  useEffect(() => {
+    if (!stream || !(stream instanceof MediaStream)) return;
+    
+    const videoTracks = stream.getVideoTracks();
+    if (videoTracks.length === 0) return;
+    
+    // Check if tracks are enabled/disabled periodically
+    const checkInterval = setInterval(() => {
+      const currentStates = videoTracks.map(t => ({ id: t.id, enabled: t.enabled, readyState: t.readyState }));
+      console.log(`🔍 Checking video tracks for ${username}:`, currentStates);
+    }, 2000);
+    
+    return () => clearInterval(checkInterval);
+  }, [stream, username]);
+
+  // Check if stream has enabled video tracks
+  const hasEnabledVideo = stream && stream.getVideoTracks().some(track => 
+    track.readyState === 'live' && track.enabled
+  );
+  
+  // For debugging
+  if (stream && !hasEnabledVideo) {
+    const videoTracks = stream.getVideoTracks();
+    if (videoTracks.length > 0) {
+      console.log(`📹 Video tracks for ${username}:`, videoTracks.map(t => ({
+        kind: t.kind,
+        enabled: t.enabled,
+        readyState: t.readyState,
+        muted: t.muted
+      })));
+    }
+  }
 
   return (
     <div className={`video-tile ${isLocal ? 'local' : 'remote'} ${isActiveSpeaker ? 'active-speaker' : ''}`}>
-      {stream && !isVideoOff ? (
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted={isLocal}
-          className="video-element"
-        />
-      ) : (
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted={isLocal}
+        className="video-element"
+        style={{ display: stream ? 'block' : 'none' }}
+      />
+      
+      {!stream && (
         <div className="video-placeholder">
           <div className="avatar-large">
             {username?.charAt(0)?.toUpperCase() || <User size={48} />}
@@ -40,7 +171,7 @@ const VideoTile = ({ stream, username, isLocal, isMuted, isVideoOff, isActiveSpe
         <span className="username">{isLocal ? "You" : username}</span>
         <div className="video-controls">
           {isMuted ? <MicOff size={16} className="icon-muted" /> : <Mic size={16} className="icon-active" />}
-          {isVideoOff && <VideoOff size={16} className="icon-muted" />}
+          {!hasEnabledVideo && <VideoOff size={16} className="icon-muted" />}
         </div>
       </div>
     </div>
@@ -60,6 +191,14 @@ const VideoGrid = ({
   const participantList = Array.isArray(participants) ? participants : [];
 
   const otherParticipants = participantList.filter(p => p.user_id !== currentUserId);
+  
+  console.log(`🎬 VideoGrid Debug:`, {
+    totalParticipants: participantList.length,
+    otherParticipants: otherParticipants.length,
+    remoteStreamsSize: remoteStreams.size,
+    remoteStreamKeys: Array.from(remoteStreams.keys()),
+    participantIds: otherParticipants.map(p => p.user_id)
+  });
 
   const combinedParticipants = [
     {
@@ -72,15 +211,34 @@ const VideoGrid = ({
     },
     ...otherParticipants.map(p => {
       const remoteStream = remoteStreams.get(p.user_id);
+      
+      console.log(`🔍 Mapping participant ${p.username} (${p.user_id}):`, {
+        hasStream: !!remoteStream,
+        streamId: remoteStream?.id,
+        videoTracks: remoteStream?.getVideoTracks().length,
+        audioTracks: remoteStream?.getAudioTracks().length
+      });
+      
+      // Validate stream has active tracks
+      const hasValidTracks = remoteStream && 
+        remoteStream.getTracks().length > 0 &&
+        remoteStream.getTracks().some(track => track.readyState === 'live');
+      
       if (!remoteStream) {
         console.warn(`⚠️ No remote stream found for participant ${p.username} (${p.user_id})`);
+      } else if (!hasValidTracks) {
+        console.warn(`⚠️ Remote stream for ${p.username} has no valid tracks`);
       } else {
-        console.log(`✅ Remote stream exists for ${p.username} (${p.user_id}):`, remoteStream.id);
+        console.log(`✅ Valid remote stream for ${p.username}:`, {
+          streamId: remoteStream.id,
+          tracks: remoteStream.getTracks().map(t => `${t.kind}:${t.readyState}`)
+        });
       }
+      
       return {
         user_id: p.user_id,
         username: p.username,
-        stream: remoteStream || null,  // ✅ ALWAYS FROM MAP
+        stream: hasValidTracks ? remoteStream : null,
         isLocal: false,
         isMuted: !p.is_audio_on,
         isVideoOff: !p.is_video_on

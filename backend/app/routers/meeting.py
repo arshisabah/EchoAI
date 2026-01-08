@@ -1363,6 +1363,39 @@ async def meeting_websocket(
                 await room_manager.broadcast_to_room(room_id, chat_message)
                 await safe_send(websocket, {"type": "chat_ack", "message": chat_message["message"]}, "chat_ack")
 
+            elif message_type == "media_state":
+                # Handle video/audio toggle notifications
+                is_video_on = message.get("is_video_on")
+                is_audio_on = message.get("is_audio_on")
+                
+                logger.info(f"🎬 Media state update from {username}: video={is_video_on}, audio={is_audio_on}")
+                
+                # Update participant state
+                await room_manager.update_participant_state(
+                    room_id=room_id,
+                    user_id=user_id,
+                    is_video_on=is_video_on,
+                    is_audio_on=is_audio_on
+                )
+                
+                # Broadcast updated state to all participants in room
+                if room_id in room_manager.rooms:
+                    room = room_manager.rooms[room_id]
+                    participant = room.participants.get(user_id)
+                    if participant:
+                        await room_manager.broadcast_to_room(
+                            room_id,
+                            {
+                                "type": "participant_updated",
+                                "user_id": user_id,
+                                "username": username,
+                                "is_video_on": participant.is_video_on,
+                                "is_audio_on": participant.is_audio_on,
+                                "timestamp": datetime.utcnow().isoformat()
+                            }
+                        )
+                        logger.info(f"✅ Broadcast media state update for {username}")
+
             # WebRTC signaling routing: target_id must be present and will be forwarded
             elif message_type in {"webrtc_offer", "webrtc_answer", "ice_candidate"}:
                 target_id = message.get("target_id")

@@ -1,12 +1,13 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
+import basicSsl from '@vitejs/plugin-basic-ssl'
 
 export default defineConfig(({ mode }) => {
   // Load env file based on mode
   const env = loadEnv(mode, process.cwd(), '')
   
   return {
-    plugins: [react()],
+    plugins: [react(), basicSsl()],
     
     // Build optimizations
     build: {
@@ -36,20 +37,28 @@ export default defineConfig(({ mode }) => {
       assetsInlineLimit: 4096,    // Inline assets smaller than 4kb
     },
     
-    // Development server config
+    // Development server config with HTTPS for network access
     server: {
+      https: true,                // Enable HTTPS for network access
       port: 5173,
-      host: true,                 // Listen on all addresses (0.0.0.0)
+      host: '0.0.0.0',            // Listen on all addresses
       strictPort: true,           // Exit if port is already in use
       open: false,                // Don't auto-open browser
       cors: true,                 // Enable CORS
       
-      // Proxy API requests in development (optional)
+      // Proxy API and WebSocket requests to backend
       proxy: {
         '/api': {
-          target: env.VITE_BACKEND_URL || 'http://localhost:8000',
+          target: 'http://172.20.89.15:8000',
           changeOrigin: true,
           secure: false
+        },
+        '/ws/meeting': {
+          target: 'ws://172.20.89.15:8000',
+          ws: true,
+          changeOrigin: true,
+          secure: false,
+          rewrite: (path) => path.replace(/^\/ws/, '')
         }
       }
     },

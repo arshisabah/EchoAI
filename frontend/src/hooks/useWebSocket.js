@@ -33,15 +33,29 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
         }
 
         // Prevent multiple simultaneous connection attempts
-        if (isConnectingRef.current || wsRef.current?.readyState === WebSocket.OPEN) {
+        if (isConnectingRef.current) {
+            console.warn('⚠️ Connection attempt already in progress, skipping');
+            return;
+        }
+        
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+            console.warn('⚠️ WebSocket already connected, skipping new connection');
+            return;
+        }
+        
+        if (wsRef.current?.readyState === WebSocket.CONNECTING) {
+            console.warn('⚠️ WebSocket connection in progress, skipping');
             return;
         }
 
         isConnectingRef.current = true;
+        console.log('🔌 Starting new WebSocket connection...');
 
         try {
+            // Use relative path for WebSocket to work with Vite proxy over HTTPS
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl =
-                `${WS_BASE_URL}/meeting/rooms/${roomId}/ws` +
+                `${protocol}//${window.location.host}/ws/meeting/rooms/${roomId}/ws` +
                 `?user_id=${encodeURIComponent(userId)}` +
                 `&username=${encodeURIComponent(username)}` +
                 `&role=${encodeURIComponent(role)}` +
@@ -253,6 +267,13 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                             break;
 
                         case 'participant_state_update':
+                        case 'participant_updated':
+                            console.log('🔄 Participant state updated:', data.username, {
+                                is_video_on: data.is_video_on,
+                                is_audio_on: data.is_audio_on,
+                                is_speaking: data.is_speaking,
+                                is_muted: data.is_muted
+                            });
                             setParticipants((prev) =>
                                 prev.map(p =>
                                     p.user_id === data.user_id
