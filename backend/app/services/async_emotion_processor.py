@@ -101,6 +101,7 @@ class AsyncEmotionProcessor:
         """
         Analyze emotion for a single transcript bar.
         Updates the bar with emotion results and changes status to 'finalized'.
+        FAST execution with timeouts to prevent blocking other users.
         """
         try:
             # Skip if already processed
@@ -108,7 +109,7 @@ class AsyncEmotionProcessor:
                 logger.debug(f"⏭️ Bar {bar.id} already processed, skipping")
                 return
             
-            # Mark as processed
+            # Mark as processed IMMEDIATELY to prevent duplicates
             self.processed_bars.add(bar.id)
             
             # Auto-cleanup processed bars (keep max 1000 entries to prevent memory leak)
@@ -123,31 +124,54 @@ class AsyncEmotionProcessor:
             # Get audio from cache if available
             audio_array = self.audio_cache.get(bar.id)
             
-            if audio_array is not None and len(audio_array) > 0:
-                # Combined text + audio emotion analysis
-                logger.debug(f"Running combined emotion analysis for bar {bar.id}")
-                emotion_result = await analyze_text_and_audio_combined(
-                    text=bar.text,
-                    audio_array=audio_array,
-                    sample_rate=16000,
-                    text_weight=0.6,
-                    audio_weight=0.4
-                )
-                
-                # Clean up audio cache
-                del self.audio_cache[bar.id]
-            else:
-                # Text-only emotion analysis (fallback)
-                logger.debug(f"Running text-only emotion analysis for bar {bar.id}")
-                emotion_result = await self._analyze_text_emotion(bar.text)
+            # ✅ Accurate emotion analysis with generous timeout for best results
+            try:
+                if audio_array is not None and len(audio_array) > 0:
+                    # Combined text + audio emotion analysis
+                    logger.debug(f"Running combined emotion analysis for bar {bar.id}")
+                    emotion_result = await asyncio.wait_for(
+                        analyze_text_and_audio_combined(
+                            text=bar.text,
+                            audio_array=audio_array,
+                            sample_rate=16000,
+                            text_weight=0.6,
+                            audio_weight=0.4
+                        ),
+                        timeout=5.0  # ✅ Generous timeout for accurate emotion detection
+                    )
+                    
+                    # Clean up audio cache
+                    del self.audio_cache[bar.id]
+                else:
+                    # Text-only emotion analysis (fallback) with timeout
+                    logger.debug(f"Running text-only emotion analysis for bar {bar.id}")
+                    emotion_result = await asyncio.wait_for(
+                        self._analyze_text_emotion(bar.text),
+                        timeout=3.0  # ✅ Good timeout for text-only accuracy
+                    )
+            except asyncio.TimeoutError:
+                logger.warning(f"⏱️ Emotion analysis timed out for bar {bar.id}, using neutral")
+                emotion_result = {"emotion": "neutral", "confidence": 0.5, "scores": {"neutral": 0.5}}
             
             # Extract emotion data
             emotion = emotion_result.get("emotion", "neutral")
             confidence = emotion_result.get("confidence", 0.0)
             scores = emotion_result.get("scores", {})
             
-            # Get guidance from emotion guidance engine
-            guidance = await self._get_emotion_guidance(emotion, bar.text)
+            # Get guidance from emotion guidance engine with good timeout
+            try:
+                guidance = await asyncio.wait_for(
+                    self._get_emotion_guidance(emotion, bar.text),
+                    timeout=2.0  # ✅ Good timeout for accurate guidance generation
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"⏱️ Guidance generation timed out for bar {bar.id}")
+                guidance = {
+                    "primary_guidance": "",
+                    "recommended_phrases": [],
+                    "response_strategies": [],
+                    "suggestion": ""
+                }
             
             # Update bar with emotion results
             bar.emotion = emotion
@@ -165,7 +189,7 @@ class AsyncEmotionProcessor:
                 f"processing_time={processing_time:.2f}s"
             )
             
-            # Broadcast emotion update via WebSocket
+            # Broadcast emotion update via WebSocket (updates existing bar)
             await self._broadcast_emotion_update(bar)
             
         except Exception as e:
@@ -175,7 +199,12 @@ class AsyncEmotionProcessor:
             bar.emotion = "neutral"
             bar.emotion_confidence = 0.0
             bar.emotion_scores = {}
-            bar.emotion_guidance = "Analysis unavailable"
+            bar.emotion_guidance = {
+                "primary_guidance": "",
+                "recommended_phrases": [],
+                "response_strategies": [],
+                "suggestion": ""
+            }
             bar.status = "finalized"
             bar.updated_at = datetime.utcnow()
     
@@ -193,12 +222,16 @@ class AsyncEmotionProcessor:
             # ✅ FIX: Use dedicated emotion_update message type to prevent bar duplication
             update_message = {
                 "type": "emotion_update",
-                "entry_id": bar.id,
+                "entry_id": bar.id,  # ✅ Use entry_id to match frontend expectations
+                "bar_id": bar.id,  # Keep for backward compatibility
+                "session_id": bar.session_id,
+                "speaker_id": bar.speaker,
                 "emotion": bar.emotion,
                 "emotion_confidence": bar.emotion_confidence,
                 "emotion_guidance": bar.emotion_guidance,
                 "emotion_scores": bar.emotion_scores,
-                "timestamp": bar.updated_at.isoformat()
+                "timestamp": bar.updated_at.isoformat(),
+                "status": "finalized"  # Signal that emotion processing is complete
             }
             
             # Broadcast to all participants in the session

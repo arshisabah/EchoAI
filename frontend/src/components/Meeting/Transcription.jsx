@@ -179,8 +179,9 @@ const TranscriptPanel = ({ transcripts, onExport, roomId }) => {
 
               <div className="transcript-text">{entry.text}</div>
 
-              {entry.is_final !== false && (
-                <div className="transcript-meta">
+              {/* Show emotion for ALL bars (live updates), dim if not final */}
+              {entry.emotion && (
+                <div className="transcript-meta" style={{ opacity: entry.is_final === false ? 0.6 : 1 }}>
                   <div 
                     className="emotion-badge"
                     style={{ 
@@ -189,6 +190,7 @@ const TranscriptPanel = ({ transcripts, onExport, roomId }) => {
                     }}
                   >
                     {entry.emotion}
+                    {entry.is_final === false && ' (analyzing...)'}
                   </div>
                   <span className="confidence-badge">
                     {((entry.emotion_confidence || entry.confidence || 1) * 100).toFixed(0)}% confident

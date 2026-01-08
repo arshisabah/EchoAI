@@ -4,30 +4,33 @@
 # ============================================
 
 # Core Framework
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-pydantic==2.5.3
-pydantic-settings==2.1.0
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0  # Use compatible versions
+pydantic-settings>=2.1.0
 python-multipart==0.0.6
 websockets==12.0
-starlette==0.35.1
+starlette>=0.35.0
 
 # API Clients
 openai==1.10.0
 anthropic==0.18.0
 httpx==0.26.0
-aiohttp==3.9.1
+aiohttp>=3.9.0  # Use any compatible version
 
 # AI/ML Libraries
+# Install PyTorch with CUDA 12.1 support for NVIDIA RTX 3050
+# Run: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# Or use CPU-only: pip install torch torchvision torchaudio
 torch>=2.1.0
 torchaudio>=2.1.0
 transformers==4.36.2
 
 # Transcription - Faster-Whisper (local, fast, unlimited)
-faster-whisper==1.0.0
+faster-whisper>=1.0.3
 
 # Alternative: OpenAI Whisper (slower but more accurate)
-openai-whisper==20231117
+# openai-whisper==20231117  # Commented out due to installation issues on Python 3.13
 
 # Real-time streaming transcription (Deepgram - optional)
 deepgram-sdk==3.2.7
@@ -36,8 +39,8 @@ deepgram-sdk==3.2.7
 librosa==0.10.1
 soundfile==0.12.1
 pydub==0.25.1
-numpy==1.26.3
-scipy==1.11.4
+numpy>=1.26.0  # Use any compatible version
+scipy>=1.11.0  # Use any compatible version
 
 # Emotion Analysis (Audio)
 # speechbrain - will be installed separately if needed
@@ -52,6 +55,7 @@ psycopg2-binary==2.9.9
 python-dotenv==1.0.0
 aiofiles==23.2.1
 python-jose[cryptography]==3.3.0
+pytz==2023.3  # Timezone support
 
 # Monitoring
 psutil==5.9.7

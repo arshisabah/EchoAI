@@ -16,12 +16,12 @@ from app.utils.timezone import get_ist_timestamp
 from typing import Dict, List, Optional, Any
 import json
 from app.core.config import settings
-from openai import AsyncOpenAI
+from anthropic import AsyncAnthropic
 
 logger = logging.getLogger(__name__)
 
-# Initialize OpenAI client
-client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+# Initialize Anthropic client for Claude
+client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
 
 # Summary modes
 SUMMARY_MODES = {
@@ -33,11 +33,11 @@ SUMMARY_MODES = {
 
 
 class SummaryService:
-    """Service for generating meeting summaries using OpenAI."""
+    """Service for generating meeting summaries using Claude Haiku 4.5."""
 
     def __init__(self):
         self.modes = SUMMARY_MODES
-        logger.info("SummaryService initialized with OpenAI GPT-4o-mini")
+        logger.info("SummaryService initialized with Claude Haiku 4.5")
 
     async def generate_summary(
         self, 
@@ -65,17 +65,18 @@ class SummaryService:
             system_prompt = self._get_system_prompt(mode)
             user_prompt = self._build_user_prompt(text, mode, context)
 
-            response = await client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
+            # Use Claude Haiku 4.5 for all clients (fast, cost-effective, high quality)
+            response = await client.messages.create(
+                model="claude-3-5-haiku-20241022",
+                max_tokens=self._get_max_tokens(mode),
                 temperature=0.3,
-                max_tokens=self._get_max_tokens(mode)
+                system=system_prompt,
+                messages=[
+                    {"role": "user", "content": user_prompt}
+                ]
             )
 
-            summary = response.choices[0].message.content.strip()
+            summary = response.content[0].text.strip()
             return summary
 
         except Exception as e:
@@ -228,20 +229,17 @@ class SummaryService:
                 f"Text: {text}"
             )
 
-            response = await client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {
-                        "role": "system", 
-                        "content": "You are an expert at extracting action items from meetings. Always respond with valid JSON."
-                    },
-                    {"role": "user", "content": prompt}
-                ],
+            response = await client.messages.create(
+                model="claude-3-5-haiku-20241022",
+                max_tokens=600,
                 temperature=0.1,
-                max_tokens=600
+                system="You are an expert at extracting action items from meetings. Always respond with valid JSON.",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
             )
 
-            content = response.choices[0].message.content.strip()
+            content = response.content[0].text.strip()
 
             try:
                 # ✅ FIX: Remove markdown code blocks if present

@@ -29,15 +29,19 @@ logger.setLevel(logging.DEBUG)  # Enable debug logging for emotion analysis
 # Model name (change if you have a different checkpoint)
 _MODEL_NAME = "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition"
 
-# Detect device: MPS (Apple Silicon) > CUDA (NVIDIA) > CPU
+# Detect device: CUDA (NVIDIA/AMD) > MPS (Apple Silicon) > CPU
 if torch.cuda.is_available():
     _DEVICE = torch.device("cuda")
+    # Enable CUDA optimizations for RTX 3050
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cuda.matmul.allow_tf32 = True
+    logger.info(f"🎭 Loading emotion model on CUDA: {torch.cuda.get_device_name(0)}")
 elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
     _DEVICE = torch.device("mps")
+    logger.info(f"🎭 Loading emotion model on MPS (Apple Silicon)")
 else:
     _DEVICE = torch.device("cpu")
-
-logger.info(f"🎭 Loading emotion model on {_DEVICE}")
+    logger.info(f"🎭 Loading emotion model on CPU")
 
 # Try to load a feature extractor (preferred for audio-only models)
 _feature_extractor = None

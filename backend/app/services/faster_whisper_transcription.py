@@ -40,22 +40,25 @@ class FasterWhisperService:
             
             if torch.cuda.is_available():
                 device = "cuda"
-                compute_type = "float16"  # Use FP16 on GPU for speed
+                compute_type = "float16"  # Use FP16 on RTX 3050 for speed
                 logger.info(f"🎮 GPU detected: {torch.cuda.get_device_name(0)} - using CUDA acceleration")
+                # Enable CUDA optimizations for RTX 3050
+                torch.backends.cudnn.benchmark = True
+                torch.backends.cuda.matmul.allow_tf32 = True
             else:
                 logger.info("💻 No GPU detected - using CPU with int8 quantization")
             
-            # Use base model for better accuracy
-            logger.info(f"🔧 Loading Faster-Whisper 'base' model on {device}...")
+            # Use small model for excellent accuracy on RTX 3050
+            logger.info(f"🔧 Loading Faster-Whisper 'small' model on {device}...")
             self.model = WhisperModel(
-                "base",  # Base model for balanced speed/accuracy
+                "small",  # Small model for excellent accuracy on RTX 3050 GPU
                 device=device,
                 compute_type=compute_type,
-                num_workers=4 if device == "cuda" else 1,  # More workers on GPU
+                num_workers=4,
                 download_root=None,
                 local_files_only=False
             )
-            logger.info(f"✅ Faster-Whisper 'base' model loaded successfully on {device}")
+            logger.info(f"✅ Faster-Whisper 'small' model loaded successfully on {device}")
             
         except Exception as e:
             logger.error(f"❌ Failed to load Faster-Whisper model: {e}")
@@ -125,8 +128,8 @@ class FasterWhisperService:
         """Continuously process audio buffer"""
         try:
             session = self.active_sessions[session_id]
-            process_interval = 0.05  # Process every 50ms (balanced)
-            min_audio_length = 8192  # 0.25 seconds minimum (better quality)
+            process_interval = 0.5  # Process every 500ms for better quality
+            min_audio_length = 48000  # 1.5 seconds minimum for clear transcription
             silence_threshold = 15.0  # 15 seconds of silence (as required)
             duration_threshold = 30.0  # 30 seconds continuous speaking
             
@@ -188,8 +191,8 @@ class FasterWhisperService:
                 # Log audio level when it changes significantly
                 logger.info(f"🎤 Audio RMS: {audio_rms:.6f}, Buffer: {len(audio_data)} bytes")
                 
-                # Skip if audio is too quiet (likely silence) - raised threshold for better quality
-                if audio_rms < 0.001:
+                # Skip if audio is too quiet (likely silence)
+                if audio_rms < 0.0005:  # Lower threshold to catch more speech
                     session["accumulated_audio"] = bytearray()
                     continue
                 
@@ -199,16 +202,19 @@ class FasterWhisperService:
                         audio_array,
                         language="en",
                         task="transcribe",
-                        beam_size=5,  # Better accuracy with base model
-                        best_of=5,  # Sample multiple candidates
-                        temperature=0.0,  # Deterministic
-                        vad_filter=False,  # DISABLE VAD - it's filtering out real speech
-                        word_timestamps=False,  # No word timestamps for speed
-                        no_speech_threshold=0.25,  # Lower threshold to detect more speech
+                        beam_size=5,  # Best quality beam search
+                        best_of=5,  # Consider multiple candidates
+                        temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],  # Temperature fallback for difficult audio
+                        vad_filter=True,  # VAD for better speech detection
+                        vad_parameters=dict(min_silence_duration_ms=500, threshold=0.3),  # ✅ BALANCED VAD - not too aggressive
+                        word_timestamps=False,
+                        no_speech_threshold=0.6,  # ✅ Moderate threshold (0.5 too low, 0.8 too high)
                         compression_ratio_threshold=2.4,
                         log_prob_threshold=-1.0,
-                        condition_on_previous_text=False,  # DISABLE - prevents hallucination repetition
-                        initial_prompt=None
+                        condition_on_previous_text=False,  # Disable to prevent hallucinations
+                        initial_prompt=None,  # ✅ NO PROMPT - prevents "thank you" hallucinations
+                        without_timestamps=True,  # Better for continuous speech
+                        patience=1.0  # More patience for better quality
                     )
                     
                     # Convert generator to list
@@ -224,7 +230,8 @@ class FasterWhisperService:
                         text = segment.text.strip()
                         
                         # CRITICAL: Reject segments where Whisper itself thinks it's not speech
-                        if segment.no_speech_prob > 0.5:
+                        # ✅ BALANCED: 0.6 threshold catches hallucinations but allows real speech
+                        if segment.no_speech_prob > 0.6:
                             logger.warning(f"   ⚠️ REJECTED: '{text}' (no_speech_prob={segment.no_speech_prob:.3f} too high)")
                             continue
                         
@@ -239,22 +246,48 @@ class FasterWhisperService:
                         # Check if we need to start a new bar (duration/silence threshold reached)
                         should_finalize = session.get("create_new_bar", False)
                         
-                        # ✅ FIX: If bar should be finalized, DON'T send cumulative text to new bar
-                        # The finalized bar already has the complete text
-                        if should_finalize:
-                            logger.info(f"🔒 Bar finalization detected - skipping duplicate text broadcast")
-                            # Reset everything for clean new bar
-                            session["accumulated_text"] = ""
+                        # ✅ FIX: Don't send duplicate text - only send NEW text
+                        # Check if this text is already part of accumulated text
+                        if session["accumulated_text"] and full_text in session["accumulated_text"]:
+                            logger.debug(f"⏭️ Skipping duplicate text: '{full_text}'")
                             session["accumulated_audio"] = bytearray()
-                            session["last_transcript_text"] = ""
+                            continue
+                        
+                        # If bar should be finalized, send final text then start new bar
+                        if should_finalize:
+                            # Send final accumulated text with is_final=True
+                            if session["accumulated_text"]:
+                                result = {
+                                    "text": session["accumulated_text"],
+                                    "is_final": True,
+                                    "confidence": 1.0,
+                                    "speech_final": True,
+                                    "create_new_bar": True  # Signal to create new bar
+                                }
+                                await session["callback"](result)
+                                logger.info(f"🔒 Bar finalized: '{session['accumulated_text'][:60]}...'")
+                            
+                            # Reset for new bar but DON'T clear existing bar
+                            session["accumulated_text"] = full_text  # Start new bar with current text
+                            session["accumulated_audio"] = bytearray()
+                            session["last_transcript_text"] = full_text
                             session["bar_start_time"] = asyncio.get_event_loop().time()
                             session["create_new_bar"] = False
                             session["silence_flag_set"] = False
                             session["duration_flag_set"] = False
-                            # Don't send this text - it's already in the finalized bar
+                            
+                            # Send first text for new bar
+                            result = {
+                                "text": full_text,
+                                "is_final": False,
+                                "confidence": 1.0,
+                                "speech_final": False,
+                                "create_new_bar": False
+                            }
+                            await session["callback"](result)
                             continue
                         
-                        # Accumulate text for current bar
+                        # Accumulate text for current bar (only NEW text)
                         if session["accumulated_text"]:
                             session["accumulated_text"] += " " + full_text
                         else:
@@ -266,9 +299,9 @@ class FasterWhisperService:
                         # Send transcript
                         result = {
                             "text": text_to_send,
-                            "is_final": should_finalize,
+                            "is_final": False,
                             "confidence": 1.0,
-                            "speech_final": should_finalize,
+                            "speech_final": False,
                         }
                         
                         await session["callback"](result)
@@ -276,14 +309,6 @@ class FasterWhisperService:
                         # Update tracking
                         session["last_transcript_text"] = full_text
                         session["accumulated_audio"] = bytearray()
-                        
-                        # Reset flags and timers if bar was finalized
-                        if should_finalize:
-                            session["bar_start_time"] = asyncio.get_event_loop().time()
-                            session["create_new_bar"] = False
-                            session["silence_flag_set"] = False
-                            session["duration_flag_set"] = False
-                            session["last_transcript_text"] = ""
                     else:
                         if not full_text:
                             # Clear buffer to avoid accumulating silence
