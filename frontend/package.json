@@ -17,6 +17,7 @@
     "recharts": "^2.10.0"
   },
   "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^1.1.0",
     "@vitejs/plugin-react": "^4.2.0",
     "terser": "^5.44.1",
     "vite": "^5.0.0"

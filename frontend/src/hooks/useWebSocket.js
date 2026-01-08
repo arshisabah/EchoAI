@@ -33,15 +33,29 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
         }
 
         // Prevent multiple simultaneous connection attempts
-        if (isConnectingRef.current || wsRef.current?.readyState === WebSocket.OPEN) {
+        if (isConnectingRef.current) {
+            console.warn('⚠️ Connection attempt already in progress, skipping');
+            return;
+        }
+        
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+            console.warn('⚠️ WebSocket already connected, skipping new connection');
+            return;
+        }
+        
+        if (wsRef.current?.readyState === WebSocket.CONNECTING) {
+            console.warn('⚠️ WebSocket connection in progress, skipping');
             return;
         }
 
         isConnectingRef.current = true;
+        console.log('🔌 Starting new WebSocket connection...');
 
         try {
+            // Use relative path for WebSocket to work with Vite proxy over HTTPS
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl =
-                `${WS_BASE_URL}/meeting/rooms/${roomId}/ws` +
+                `${protocol}//${window.location.host}/ws/meeting/rooms/${roomId}/ws` +
                 `?user_id=${encodeURIComponent(userId)}` +
                 `&username=${encodeURIComponent(username)}` +
                 `&role=${encodeURIComponent(role)}` +
@@ -191,32 +205,6 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                             console.log('🎭 Emotion update received:', {
                                 entry_id: data.entry_id,
                                 emotion: data.emotion,
-                                guidance: data.emotion_guidance
-                            });
-                            
-                            // Update emotion for specific entry only (preserve other entries' guidance)
-                            setTranscripts((prev) => {
-                                const existingIndex = prev.findIndex(t => t.entry_id === data.entry_id);
-                                if (existingIndex !== -1) {
-                                    const updated = [...prev];
-                                    updated[existingIndex] = {
-                                        ...updated[existingIndex],
-                                        emotion: data.emotion,
-                                        emotion_confidence: data.emotion_confidence,
-                                        emotion_guidance: data.emotion_guidance || updated[existingIndex].emotion_guidance
-                                    };
-                                    console.log('🎭 Emotion + guidance updated for entry:', data.entry_id.substring(0, 8));
-                                    return updated;
-                                }
-                                console.warn('⚠️ Entry not found for emotion update:', data.entry_id);
-                                return prev;
-                            });
-                            break;
-
-                        case 'emotion_update':
-                            console.log('🎭 Emotion update received:', {
-                                entry_id: data.entry_id,
-                                emotion: data.emotion,
                                 confidence: data.emotion_confidence,
                                 has_guidance: !!data.emotion_guidance
                             });
@@ -273,6 +261,13 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                             break;
 
                         case 'participant_state_update':
+                        case 'participant_updated':
+                            console.log('🔄 Participant state updated:', data.username, {
+                                is_video_on: data.is_video_on,
+                                is_audio_on: data.is_audio_on,
+                                is_speaking: data.is_speaking,
+                                is_muted: data.is_muted
+                            });
                             setParticipants((prev) =>
                                 prev.map(p =>
                                     p.user_id === data.user_id

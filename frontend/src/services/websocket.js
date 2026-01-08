@@ -15,7 +15,9 @@ class WebSocketService {
       return this.ws;
     }
 
-    const wsUrl = `${config.WS_URL}/meeting/rooms/${roomId}/ws?user_id=${userId}&username=${encodeURIComponent(username)}`;
+    // Use relative path for WebSocket to work with Vite proxy over HTTPS
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws/meeting/rooms/${roomId}/ws?user_id=${userId}&username=${encodeURIComponent(username)}`;
     
     if (config.DEBUG) {
       console.log('🔌 Connecting to WebSocket:', wsUrl);

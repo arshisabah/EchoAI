@@ -18,6 +18,7 @@ import EmotionPanel from './Meeting/EmotionPanel';
 import TaskPanel from './Meeting/TaskPanel';
 import SummaryPanel from './Meeting/SummaryPanel';
 import PostMeetingModal from './Meeting/PostMeetingModal';
+import WebRTCDebugPanel from './Meeting/WebRTCDebugPanel';
 
 const MeetingRoom = ({ userInfo }) => {
 
@@ -41,6 +42,7 @@ const MeetingRoom = ({ userInfo }) => {
   const [isResizing, setIsResizing] = useState(false);
   const [isPanelMaximized, setIsPanelMaximized] = useState(false);
   const [isRoomFullscreen, setIsRoomFullscreen] = useState(false);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
   const resizeRef = useRef(null);
   const meetingRoomRef = useRef(null);
 
@@ -114,6 +116,20 @@ const MeetingRoom = ({ userInfo }) => {
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
+  // Add keyboard shortcut for debug panel (Ctrl/Cmd + Shift + D)
+  useEffect(() => {
+    const handleKeyPress = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'D') {
+        e.preventDefault();
+        setShowDebugPanel(prev => !prev);
+        console.log(`🐛 Debug panel ${!showDebugPanel ? 'enabled' : 'disabled'}`);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [showDebugPanel]);
+
   // ------------------------------
   // WEBSOCKET (Role + Password applied)
   // ------------------------------
@@ -179,23 +195,23 @@ const MeetingRoom = ({ userInfo }) => {
   // ------------------------------
   const toggleAudio = useCallback(() => {
     console.log(`🎤 Toggling audio: ${isAudioEnabled} -> ${!isAudioEnabled}`);
-    toggleAudioWebRTC(); // Toggle WebRTC audio (mute/unmute for other participants)
     
-    // Also start/stop transcription recording
+    // Toggle WebRTC audio (mute/unmute for other participants)
+    toggleAudioWebRTC();
+    
+    // Stop/start recording when mic is toggled to respect recording state
     if (isAudioEnabled) {
-      // Currently enabled, so we're turning it OFF
       console.log("🔇 Microphone disabled - stopping transcription recording");
       stopRecording();
     } else {
-      // Currently disabled, so we're turning it ON
       console.log("🔊 Microphone enabled - starting transcription recording");
-      if (isConnected && isServerReady) {
+      if (isConnected && isServerReady && !isRecording) {
         startRecording().catch(err => {
           console.error("❌ Failed to restart recording:", err);
         });
       }
     }
-  }, [isAudioEnabled, toggleAudioWebRTC, stopRecording, startRecording, isConnected, isServerReady]);
+  }, [isAudioEnabled, toggleAudioWebRTC, isConnected, isServerReady, isRecording, startRecording, stopRecording]);
 
   // ------------------------------
   // UPDATE CONNECTION REF - ✅ FIX: Keep ref in sync with connection state
@@ -240,23 +256,49 @@ const MeetingRoom = ({ userInfo }) => {
     };
 
     loadRoom();
-  }, [roomId]);
+    
+    // Cleanup: disconnect WebSocket when component unmounts
+    return () => {
+      console.log("🧹 Component unmounting - cleaning up WebSocket");
+      disconnect();
+    };
+  }, [roomId, connect, disconnect, handleSignalingMessage, userInfo.username, navigate]);
 
   // ------------------------------
-  // START CAMERA/MIC AFTER WEBSOCKET CONNECTS
+  // START CAMERA/MIC IMMEDIATELY - CRITICAL FOR WEBRTC
   // ------------------------------
   useEffect(() => {
+    let mounted = true;
+    
     const initMedia = async () => {
       try {
-        await startLocalMedia(false);
+        console.log("🎥 Initializing camera and microphone...");
+        const stream = await startLocalMedia(false);
+        
+        if (mounted && stream) {
+          console.log("✅ Local media initialized successfully:", {
+            id: stream.id,
+            videoTracks: stream.getVideoTracks().length,
+            audioTracks: stream.getAudioTracks().length,
+            tracks: stream.getTracks().map(t => ({
+              kind: t.kind,
+              label: t.label,
+              enabled: t.enabled,
+              readyState: t.readyState
+            }))
+          });
+        }
       } catch (err) {
-        console.error("Media init failed:", err);
+        console.error("❌ Media init failed:", err);
+        alert("Failed to access camera/microphone. Please check your browser permissions.");
       }
     };
 
     initMedia();
 
     return () => {
+      mounted = false;
+      console.log("🧹 Cleaning up MeetingRoom resources...");
       stopRecording();
       stopLocalMedia();
       disconnect();
@@ -294,7 +336,7 @@ const MeetingRoom = ({ userInfo }) => {
     } else if (isRecording) {
       console.log("🎤 Recording already in progress");
     }
-  }, [isConnected, isServerReady, isRecording]);
+  }, [isConnected, isServerReady, isRecording, startRecording]);
 
   // ------------------------------
   // UPDATE EMOTION UI
@@ -524,9 +566,20 @@ const MeetingRoom = ({ userInfo }) => {
         </div>
       </div>
 
-      {(wsError || rtcError || recorderError) && (
+      {(wsError || rtcError) && (
         <div className="error-banner">
-          ⚠️ {wsError || rtcError || recorderError}
+          ⚠️ {wsError || rtcError}
+        </div>
+      )}
+
+      {recorderError && (
+        <div className="error-banner warning">
+          <span>🎤 {recorderError}</span>
+          {recorderError.includes('localhost or HTTPS') && (
+            <div style={{ marginTop: '8px', fontSize: '0.9em' }}>
+              💡 Tip: Access via <strong>http://localhost:5173</strong> instead of IP address for microphone access
+            </div>
+          )}
         </div>
       )}
 
@@ -536,6 +589,14 @@ const MeetingRoom = ({ userInfo }) => {
           onClose={handleCloseModal}
         />
       )}
+
+      {/* WebRTC Debug Panel - Press Ctrl/Cmd + Shift + D to toggle */}
+      <WebRTCDebugPanel
+        localStream={localStream}
+        remoteStreamsMap={remoteStreamsMap}
+        participants={participants}
+        isVisible={showDebugPanel}
+      />
     </div>
   );
 };

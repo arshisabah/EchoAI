@@ -113,6 +113,11 @@ export const useAudioRecorder = (onAudioData, opts = {}) => {
 
     if (isRecording) return;
     try {
+      // Check if mediaDevices is supported
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('getUserMedia not supported. Please use HTTPS or localhost.');
+      }
+
       // request microphone
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -175,11 +180,18 @@ export const useAudioRecorder = (onAudioData, opts = {}) => {
       console.log("useAudioRecorder: started (PCM 16kHz)");
     } catch (err) {
       console.error("useAudioRecorder start error:", err);
-      const msg = err?.name === "NotAllowedError"
-        ? "Microphone permission denied"
-        : err?.name === "NotFoundError"
-        ? "No microphone found"
-        : (err?.message || "Failed to start microphone");
+      let msg = "Failed to start microphone";
+      
+      if (err?.name === "NotAllowedError") {
+        msg = "Microphone permission denied. Please allow microphone access.";
+      } else if (err?.name === "NotFoundError") {
+        msg = "No microphone found. Please connect a microphone.";
+      } else if (err?.message?.includes('getUserMedia')) {
+        msg = "Browser security: Please use localhost or HTTPS to access microphone.";
+      } else if (err?.message) {
+        msg = err.message;
+      }
+      
       setError(msg);
       setIsRecording(false);
       clearFlush();
