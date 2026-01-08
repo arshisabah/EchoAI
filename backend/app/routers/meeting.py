@@ -428,12 +428,15 @@ async def download_meeting_transcript(room_id: str, format: str = Query("txt", r
         else:
             raise HTTPException(status_code=400, detail="Invalid format. Use txt, json, or srt")
         
-        # Return as downloadable file
+        # Return as downloadable file with IST timestamp
+        from app.utils.timezone import utc_to_ist
+        ist_now = utc_to_ist(datetime.utcnow())
+        
         return Response(
             content=content,
             media_type=media_type,
             headers={
-                "Content-Disposition": f"attachment; filename=transcript_{room_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.{extension}"
+                "Content-Disposition": f"attachment; filename=transcript_{room_id}_{ist_now.strftime('%Y%m%d_%H%M%S')}_IST.{extension}"
             }
         )
     
@@ -445,7 +448,9 @@ async def download_meeting_transcript(room_id: str, format: str = Query("txt", r
 
 
 def _generate_txt_transcript(entries) -> str:
-    """Generate plain text transcript."""
+    """Generate plain text transcript with IST timestamps."""
+    from app.utils.timezone import utc_to_ist
+    
     lines = []
     lines.append("=" * 80)
     lines.append("MEETING TRANSCRIPT")
@@ -453,7 +458,14 @@ def _generate_txt_transcript(entries) -> str:
     lines.append("")
     
     for entry in entries:
-        timestamp = entry.timestamp.strftime("%H:%M:%S") if hasattr(entry.timestamp, 'strftime') else str(entry.timestamp)
+        # Convert to IST time
+        if hasattr(entry.timestamp, 'strftime'):
+            ist_time = utc_to_ist(entry.timestamp)
+            timestamp = ist_time.strftime("%I:%M:%S %p IST")  # 12-hour format with AM/PM
+        else:
+            timestamp = str(entry.timestamp)
+        
+        # Speaker is already the username (we fixed the storage)
         speaker = entry.speaker or "Unknown"
         text = entry.text
         
@@ -1030,7 +1042,7 @@ async def meeting_websocket(
                             store = get_transcript_store()
                             entry_obj = await store.add_transcript_entry(
                                 meeting_id=current_room_id,
-                                speaker=participant_id,
+                                speaker=display_name,
                                 text=text,
                                 confidence=confidence
                             )
@@ -1148,7 +1160,7 @@ async def meeting_websocket(
                             store = get_transcript_store()
                             await store.add_transcript_entry(
                                 meeting_id=current_room_id,
-                                speaker=current_user_id,
+                                speaker=display_name,
                                 text=text,
                                 confidence=confidence
                             )
@@ -1358,7 +1370,7 @@ async def meeting_websocket(
                     "type": "chat_message",
                     "from_user": username,
                     "message": message.get("message"),
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": get_ist_timestamp()
                 }
                 await room_manager.broadcast_to_room(room_id, chat_message)
                 await safe_send(websocket, {"type": "chat_ack", "message": chat_message["message"]}, "chat_ack")

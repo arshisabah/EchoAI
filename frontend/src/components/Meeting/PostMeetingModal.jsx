@@ -113,15 +113,11 @@ const PostMeetingModal = ({ roomId, onClose }) => {
               <div className="meeting-metadata">
                 <div className="metadata-item">
                   <Clock size={20} />
-                  <span>Duration: {formatDuration(metadata.duration)}</span>
+                  <span>Duration: {formatDuration(metadata.duration_seconds)}</span>
                 </div>
                 <div className="metadata-item">
                   <Users size={20} />
-                  <span>Participants: {metadata.total_chunks || 'N/A'}</span>
-                </div>
-                <div className="metadata-item">
-                  <Music size={20} />
-                  <span>Size: {formatFileSize(metadata.file_size)}</span>
+                  <span>Participants: {metadata.participant_count || 'N/A'}</span>
                 </div>
               </div>
             )}
@@ -158,41 +154,23 @@ const PostMeetingModal = ({ roomId, onClose }) => {
                   <FileText size={20} />
                   <span>Transcript</span>
                 </div>
-                <div className="download-buttons">
-                  <button
-                    className="btn-secondary btn-sm"
-                    onClick={() => handleDownloadTranscript('txt')}
-                    disabled={downloadingTranscript === 'txt'}
-                  >
-                    {downloadingTranscript === 'txt' ? (
+                <button
+                  className="btn-primary btn-download"
+                  onClick={() => handleDownloadTranscript('txt')}
+                  disabled={downloadingTranscript === 'txt'}
+                >
+                  {downloadingTranscript === 'txt' ? (
+                    <>
                       <div className="loading-spinner small"></div>
-                    ) : (
-                      'TXT'
-                    )}
-                  </button>
-                  <button
-                    className="btn-secondary btn-sm"
-                    onClick={() => handleDownloadTranscript('json')}
-                    disabled={downloadingTranscript === 'json'}
-                  >
-                    {downloadingTranscript === 'json' ? (
-                      <div className="loading-spinner small"></div>
-                    ) : (
-                      'JSON'
-                    )}
-                  </button>
-                  <button
-                    className="btn-secondary btn-sm"
-                    onClick={() => handleDownloadTranscript('srt')}
-                    disabled={downloadingTranscript === 'srt'}
-                  >
-                    {downloadingTranscript === 'srt' ? (
-                      <div className="loading-spinner small"></div>
-                    ) : (
-                      'SRT'
-                    )}
-                  </button>
-                </div>
+                      Downloading...
+                    </>
+                  ) : (
+                    <>
+                      <Download size={16} />
+                      Download Transcript (TXT)
+                    </>
+                  )}
+                </button>
               </div>
             </div>
 

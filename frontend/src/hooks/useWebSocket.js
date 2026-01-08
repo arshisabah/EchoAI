@@ -139,7 +139,7 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                                 
                                 // New entry
                                 console.log('🆕 New transcript entry with emotion:', data.emotion);
-                                return [data, ...prev].slice(0, 100);
+                                return [data, ...prev].slice(0, 500);
                             });
                             break;
                         
@@ -194,7 +194,39 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                                         is_final: bar.status === 'finalized'
                                     };
                                     console.log('🆕 Created new bar:', entry_id.substring(0, 8));
-                                    const newList = [newEntry, ...prev].slice(0, 100);
+                                    
+                                    // ✅ CRITICAL FIX: Also add the finalized bar if it exists
+                                    // When 30-second threshold is hit, backend sends both new_bar and finalized_bar
+                                    let newList = [newEntry, ...prev];
+                                    
+                                    if (data.finalized_bar) {
+                                        const finalizedEntry = {
+                                            entry_id: data.finalized_bar.id,
+                                            user_id: data.finalized_bar.speaker_id,
+                                            username: data.finalized_bar.speaker_name || data.finalized_bar.speaker,
+                                            text: data.finalized_bar.text,
+                                            emotion: data.finalized_bar.emotion || 'neutral',
+                                            emotion_confidence: data.finalized_bar.emotion_confidence || 0,
+                                            emotion_guidance: data.finalized_bar.emotion_guidance || {},
+                                            confidence: data.finalized_bar.confidence || 1.0,
+                                            timestamp: data.finalized_bar.timestamp || data.finalized_bar.started_at,
+                                            is_final: true
+                                        };
+                                        
+                                        // Check if finalized bar already exists (to avoid duplicates)
+                                        const finalizedExists = prev.findIndex(t => t.entry_id === data.finalized_bar.id);
+                                        if (finalizedExists !== -1) {
+                                            // Update existing finalized bar
+                                            newList[finalizedExists + 1] = finalizedEntry;
+                                            console.log('📝 Updated finalized bar:', data.finalized_bar.id.substring(0, 8));
+                                        } else {
+                                            // Add finalized bar after new bar
+                                            newList = [newEntry, finalizedEntry, ...prev];
+                                            console.log('✅ Added finalized bar:', data.finalized_bar.id.substring(0, 8));
+                                        }
+                                    }
+                                    
+                                    newList = newList.slice(0, 500);
                                     console.log('✅ New transcript list length:', newList.length);
                                     return newList;
                                 } else {

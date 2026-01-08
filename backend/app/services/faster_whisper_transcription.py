@@ -230,8 +230,8 @@ class FasterWhisperService:
                         text = segment.text.strip()
                         
                         # CRITICAL: Reject segments where Whisper itself thinks it's not speech
-                        # ✅ BALANCED: 0.6 threshold catches hallucinations but allows real speech
-                        if segment.no_speech_prob > 0.6:
+                        # ✅ BALANCED: 0.75 threshold catches hallucinations but allows real speech
+                        if segment.no_speech_prob > 0.75:
                             logger.warning(f"   ⚠️ REJECTED: '{text}' (no_speech_prob={segment.no_speech_prob:.3f} too high)")
                             continue
                         

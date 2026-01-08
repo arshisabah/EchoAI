@@ -167,18 +167,29 @@ class AudioRecorder:
     
     def get_duration_seconds(self) -> float:
         """Get the duration of the recording in seconds."""
-        if self.mixed_audio is None:
+        # Mix audio if not already mixed
+        if self.mixed_audio is None and self.participant_chunks:
+            self._mix_audio()
+        
+        if self.mixed_audio is None or len(self.mixed_audio) == 0:
             return 0.0
         
         return len(self.mixed_audio) / self.sample_rate
     
     def get_metadata(self) -> Dict:
         """Get recording metadata."""
+        # Calculate file size
+        file_size = 0
+        if self.mixed_audio is not None:
+            # Estimate WAV file size: samples * 2 bytes (16-bit) + ~44 bytes header
+            file_size = len(self.mixed_audio) * 2 + 44
+        
         return {
             "room_id": self.room_id,
             "sample_rate": self.sample_rate,
             "duration_seconds": self.get_duration_seconds(),
             "participant_count": len(self.participant_chunks),
+            "file_size": file_size,
             "start_time": self.start_time.isoformat() if self.start_time else None,
             "end_time": self.end_time.isoformat() if self.end_time else None,
             "is_recording": self.is_recording

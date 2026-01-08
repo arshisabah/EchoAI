@@ -44,7 +44,7 @@ cp backend/.env.example backend/.env
 cd backend
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
-
+<!-- '''patel-> cd C:\Users\vishal\OneDrive\Desktop\EchoAI\backend; C:/Users/vishal/OneDrive/Desktop/EchoAI/backend/venv/Scripts/python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 -->
 ### Frontend Setup
 
 1. **Install dependencies:**

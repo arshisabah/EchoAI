@@ -113,8 +113,18 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
     }
 
     if (peerConnectionsRef.current.has(peerId)) {
-      console.log(`♻️ Reusing existing peer connection for ${peerId}`);
-      return peerConnectionsRef.current.get(peerId);
+      const existingPc = peerConnectionsRef.current.get(peerId);
+      console.log(`♻️ Found existing peer connection for ${peerId}, state: ${existingPc.signalingState}`);
+      
+      // If the connection is in a bad state, close and recreate
+      if (existingPc.signalingState === 'closed' || existingPc.iceConnectionState === 'failed') {
+        console.log(`🔄 Closing failed connection for ${peerId} and creating new one`);
+        existingPc.close();
+        peerConnectionsRef.current.delete(peerId);
+        WebRTCService.peerConnections.delete(peerId);
+      } else {
+        return existingPc;
+      }
     }
 
     // ✅ CRITICAL: Wait for local stream before creating connections
@@ -321,9 +331,37 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
         }
 
         console.log(`📨 Received WebRTC offer from ${from}`);
-        const pc = createPeerConnection(from);
+        let pc = peerConnectionsRef.current.get(from);
+        
+        // If no connection exists, create one
         if (!pc) {
-          console.error(`❌ Failed to create peer connection for ${from}`);
+          pc = createPeerConnection(from);
+          if (!pc) {
+            console.error(`❌ Failed to create peer connection for ${from}`);
+            return;
+          }
+        }
+
+        // ✅ Handle offer collision with rollback
+        const isStable = pc.signalingState === 'stable';
+        const isSettingRemoteOffer = pc.signalingState === 'have-local-offer';
+        
+        if (isSettingRemoteOffer) {
+          // Offer collision detected - use polite peer pattern
+          // Determine who should yield (use userId comparison for consistency)
+          const shouldYield = userId < from;
+          
+          if (shouldYield) {
+            console.log(`🔄 Offer collision with ${from} - rolling back our offer`);
+            await pc.setLocalDescription({ type: 'rollback' });
+          } else {
+            console.log(`⏭️ Offer collision with ${from} - ignoring their offer (we're polite)`);
+            return;
+          }
+        }
+
+        if (!isStable && !isSettingRemoteOffer && pc.signalingState !== 'stable') {
+          console.warn(`⚠️ Cannot accept offer from ${from} - current state: ${pc.signalingState}`);
           return;
         }
 
@@ -361,8 +399,13 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
         console.log(`📨 Received WebRTC answer from ${from}`);
         const pc = peerConnectionsRef.current.get(from);
         if (pc && sdp) {
-          await pc.setRemoteDescription({ type: "answer", sdp });
-          console.log(`✅ Set remote description (answer) for peer ${from}`);
+          // ✅ Check signaling state before setting remote answer
+          if (pc.signalingState === 'have-local-offer') {
+            await pc.setRemoteDescription({ type: "answer", sdp });
+            console.log(`✅ Set remote description (answer) for peer ${from}`);
+          } else {
+            console.warn(`⚠️ Ignoring answer from ${from} - wrong state: ${pc.signalingState} (expected: have-local-offer)`);
+          }
         } else {
           console.error(`❌ No peer connection found for ${from} or missing SDP`);
         }

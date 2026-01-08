@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, MessageSquare } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
+import { format } from 'date-fns';
 
 const ChatPanel = ({ messages, onSendMessage, currentUser }) => {
   const [inputMessage, setInputMessage] = useState('');
@@ -19,6 +19,16 @@ const ChatPanel = ({ messages, onSendMessage, currentUser }) => {
     if (inputMessage.trim()) {
       onSendMessage(inputMessage.trim());
       setInputMessage('');
+    }
+  };
+
+  const formatTime = (timestamp) => {
+    try {
+      const date = new Date(timestamp);
+      // Format as IST time: HH:MM AM/PM
+      return format(date, 'hh:mm a');
+    } catch (error) {
+      return '';
     }
   };
 
@@ -56,7 +66,7 @@ const ChatPanel = ({ messages, onSendMessage, currentUser }) => {
                   )}
                   <div className="message-text">{msg.message}</div>
                   <span className="message-time">
-                    {formatDistanceToNow(new Date(msg.timestamp), { addSuffix: true })}
+                    {formatTime(msg.timestamp)}
                   </span>
                 </div>
               </div>
