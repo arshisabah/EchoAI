@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------
     # AI MODELS
     # -------------------------------------------------------------------
-    WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "base")
+    WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "small")  # Small model for excellent accuracy on RTX 3050
     MODEL_CACHE_DIR: str = os.getenv("MODEL_CACHE_DIR", "./models_cache")
     API_TIMEOUT_SECONDS: int = int(os.getenv("API_TIMEOUT_SECONDS", "60"))
     USE_STREAMING_TRANSCRIPTION: bool = os.getenv("USE_STREAMING_TRANSCRIPTION", "true").lower() == "true"

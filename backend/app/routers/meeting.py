@@ -981,10 +981,22 @@ async def meeting_websocket(
                             
                             logger.info(f"👤 Resolved speaker: {deepgram_speaker} -> {participant_id} ({display_name})")
                             
-                            # Emotion analysis (simplified for room-level)
-                            emotion = {"emotion": "neutral", "confidence": 0, "scores": {}}
+                            # Emotion analysis (simplified for room-level) - FAST
+                            emotion = {"emotion": "neutral", "confidence": 0.5, "scores": {}}
+                            try:
+                                emotion_service = get_emotion_service()
+                                emotion_result = await asyncio.wait_for(
+                                    emotion_service.analyze_text(text),
+                                    timeout=0.3  # Very fast timeout
+                                )
+                                if emotion_result:
+                                    emotion = emotion_result
+                            except asyncio.TimeoutError:
+                                logger.debug(f"⏱️ Emotion analysis timed out, using neutral")
+                            except Exception as e:
+                                logger.debug(f"⚠️ Emotion analysis failed: {e}")
                             
-                            # Get emotion guidance
+                            # Get emotion guidance - FAST, non-blocking
                             guidance = {}
                             try:
                                 guidance_engine = get_emotion_guidance_engine()
@@ -994,10 +1006,14 @@ async def meeting_websocket(
                                         emotion["emotion"], text, emotion.get("confidence", 0),
                                         context={"username": display_name, "room_id": current_room_id, "speaker": participant_id}
                                     ),
-                                    timeout=2.0
+                                    timeout=0.5  # Fast timeout to avoid delays
                                 )
+                            except asyncio.TimeoutError:
+                                logger.debug(f"⏱️ Guidance generation timed out (non-critical)")
+                                guidance = {}  # Use empty guidance if too slow
                             except Exception as e:
-                                logger.warning(f"⚠️ Guidance generation failed: {e}")
+                                logger.debug(f"⚠️ Guidance generation failed: {e}")
+                                guidance = {}
                             
                             # Broadcast transcript
                             await room_manager.broadcast_transcript(

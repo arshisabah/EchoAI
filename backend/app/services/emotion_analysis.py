@@ -99,6 +99,25 @@ class EmotionService:
             content = response.choices[0].message.content.strip()
             logger.debug(f"📥 OpenAI response content: {content[:200]}")
             
+            # ✅ FIX: Remove markdown code blocks if present
+            if "```json" in content:
+                content = content.replace("```json", "").replace("```", "").strip()
+            elif "```" in content:
+                content = content.replace("```", "").strip()
+
+            result = json.loads(content)
+            logger.info(f"✅ [EMOTION] Parsed emotion result: {result.get('emotion', 'unknown')} (confidence: {result.get('confidence', 0):.2f})")
+            return result
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"⚠️ Failed to parse OpenAI response as JSON: {e}")
+            logger.warning(f"   Response content: {content[:200]}")
+            # Fallback with keyword matching
+            return self._fallback_emotion_detection(text)
+        except Exception as e:
+            logger.error(f"❌ [EMOTION] Error during OpenAI analysis: {e}", exc_info=True)
+            return self._fallback_emotion_detection(text)
+            
             try:
                 # ✅ FIX: Remove markdown code blocks if present
                 if content.startswith("```"):

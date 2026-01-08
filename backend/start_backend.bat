@@ -73,8 +73,8 @@ echo Press CTRL+C to stop the server
 echo ========================================
 echo.
 
-REM Start the server
-uvicorn %MAIN_MODULE% --reload --host 0.0.0.0 --port 8000
+REM Start the server with reload-dir to watch only app directory
+uvicorn %MAIN_MODULE% --reload --reload-dir app --host 0.0.0.0 --port 8000
 
 REM If uvicorn command fails, try direct python
 if errorlevel 1 (

@@ -141,15 +141,16 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                             
                             // Handle continuous transcript bars
                             setTranscripts((prev) => {
-                                console.log('🔄 setTranscripts called | prev length:', prev.length);
+                                console.log('🔄 setTranscripts called | prev length:', prev.length, '| action:', data.action);
                                 const bar = data.bar;
                                 if (!bar) return prev;
                                 
                                 const entry_id = bar.id;
                                 const existingIndex = prev.findIndex(t => t.entry_id === entry_id);
                                 
-                                if (data.action === 'append' && existingIndex !== -1) {
-                                    // Update existing bar
+                                // ✅ FIX: Update if bar exists (regardless of action), create if new
+                                if (existingIndex !== -1) {
+                                    // Bar already exists - UPDATE it (for both 'append' and duplicate 'create')
                                     const updated = [...prev];
                                     const existing = updated[existingIndex];
                                     updated[existingIndex] = {
@@ -162,10 +163,10 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                                         emotion_guidance: bar.emotion_guidance || existing.emotion_guidance,
                                         is_final: bar.status === 'finalized'
                                     };
-                                    console.log('📝 Updated transcript bar:', entry_id.substring(0, 8));
+                                    console.log('📝 Updated existing bar:', entry_id.substring(0, 8), '| action was:', data.action);
                                     return updated;
-                                } else {
-                                    // Create new bar
+                                } else if (data.action === 'create') {
+                                    // New bar - CREATE it (only for 'create' action)
                                     const newEntry = {
                                         entry_id: entry_id,
                                         user_id: bar.speaker_id,
@@ -178,41 +179,19 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                                         timestamp: bar.timestamp,
                                         is_final: bar.status === 'finalized'
                                     };
-                                    console.log('🆕 New transcript bar:', entry_id.substring(0, 8), '| New entry:', newEntry);
+                                    console.log('🆕 Created new bar:', entry_id.substring(0, 8));
                                     const newList = [newEntry, ...prev].slice(0, 100);
-                                    console.log('✅ Returning new transcript list, length:', newList.length);
+                                    console.log('✅ New transcript list length:', newList.length);
                                     return newList;
+                                } else {
+                                    // 'append' action but bar doesn't exist - ignore or log warning
+                                    console.warn('⚠️ Append action for non-existent bar:', entry_id.substring(0, 8));
+                                    return prev;
                                 }
                             });
                             console.log('✅ Transcript bar case completed');
                             break;
                         
-                        case 'emotion_update':
-                            console.log('🎭 Emotion update received:', {
-                                entry_id: data.entry_id,
-                                emotion: data.emotion,
-                                guidance: data.emotion_guidance
-                            });
-                            
-                            // Update emotion for specific entry only (preserve other entries' guidance)
-                            setTranscripts((prev) => {
-                                const existingIndex = prev.findIndex(t => t.entry_id === data.entry_id);
-                                if (existingIndex !== -1) {
-                                    const updated = [...prev];
-                                    updated[existingIndex] = {
-                                        ...updated[existingIndex],
-                                        emotion: data.emotion,
-                                        emotion_confidence: data.emotion_confidence,
-                                        emotion_guidance: data.emotion_guidance || updated[existingIndex].emotion_guidance
-                                    };
-                                    console.log('🎭 Emotion + guidance updated for entry:', data.entry_id.substring(0, 8));
-                                    return updated;
-                                }
-                                console.warn('⚠️ Entry not found for emotion update:', data.entry_id);
-                                return prev;
-                            });
-                            break;
-
                         case 'emotion_update':
                             console.log('🎭 Emotion update received:', {
                                 entry_id: data.entry_id,
@@ -231,7 +210,8 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                                         emotion: data.emotion,
                                         emotion_confidence: data.emotion_confidence,
                                         emotion_guidance: data.emotion_guidance || updated[existingIndex].emotion_guidance,
-                                        emotion_scores: data.emotion_scores || updated[existingIndex].emotion_scores
+                                        emotion_scores: data.emotion_scores || updated[existingIndex].emotion_scores,
+                                        is_final: data.status === 'finalized' || updated[existingIndex].is_final  // Mark as final when emotion arrives
                                     };
                                     console.log('🎭 Emotion updated for entry:', data.entry_id.substring(0, 8), '→', data.emotion);
                                     return updated;
