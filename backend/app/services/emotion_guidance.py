@@ -175,6 +175,9 @@ class EmotionGuidanceEngine:
             "emotion": emotion,
             "confidence": confidence,
             "suggestion": suggestion,
+            "primary_guidance": suggestion,  # ✅ Add field that frontend expects
+            "recommended_phrases": template["tips"][:3],  # ✅ Frontend expects this field
+            "response_strategies": template["tips"],  # ✅ Frontend expects this field
             "tips": template["tips"],
             "tone": template["tone"],
             "timestamp": datetime.utcnow().isoformat(),

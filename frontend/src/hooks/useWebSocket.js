@@ -213,6 +213,34 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                             });
                             break;
 
+                        case 'emotion_update':
+                            console.log('🎭 Emotion update received:', {
+                                entry_id: data.entry_id,
+                                emotion: data.emotion,
+                                confidence: data.emotion_confidence,
+                                has_guidance: !!data.emotion_guidance
+                            });
+                            
+                            // Update emotion for specific entry without duplicating bars
+                            setTranscripts((prev) => {
+                                const existingIndex = prev.findIndex(t => t.entry_id === data.entry_id);
+                                if (existingIndex !== -1) {
+                                    const updated = [...prev];
+                                    updated[existingIndex] = {
+                                        ...updated[existingIndex],
+                                        emotion: data.emotion,
+                                        emotion_confidence: data.emotion_confidence,
+                                        emotion_guidance: data.emotion_guidance || updated[existingIndex].emotion_guidance,
+                                        emotion_scores: data.emotion_scores || updated[existingIndex].emotion_scores
+                                    };
+                                    console.log('🎭 Emotion updated for entry:', data.entry_id.substring(0, 8), '→', data.emotion);
+                                    return updated;
+                                }
+                                console.warn('⚠️ Entry not found for emotion update:', data.entry_id);
+                                return prev;
+                            });
+                            break;
+
                         case 'participant_joined':
                             console.log('👤 User joined:', data.username);
                             // ✅ FIX: Use full participant list from backend if available

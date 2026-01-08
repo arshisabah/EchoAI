@@ -151,22 +151,35 @@ class OrchestratorService:
         Returns action (append/create) and bar data for WebSocket response.
         """
         try:
+            # Get timezone-aware IST timestamp (India Standard Time)
+            from app.services.continuous_transcript_manager import get_ist_now
+            
             # Process through continuous transcript manager
             result = await self.transcript_manager.process_transcription(
                 session_id=session_id,
                 speaker=speaker,
                 text=text,
                 confidence=confidence,
-                timestamp=datetime.utcnow(),
+                timestamp=get_ist_now(),
                 speaker_name=speaker_name
             )
             
             bar = result["bar"]
             action = result["action"]
             
-            # Cache audio for emotion processing (if available)
-            if audio_array is not None and len(audio_array) > 0:
-                self.emotion_processor.cache_audio_for_bar(bar.id, audio_array)
+            # Cache audio for the FINALIZED bar (not the new bar)
+            # When action="create", a new bar was created and the previous was finalized
+            # We want audio for the finalized bar for emotion processing
+            if action == "create" and "finalized_bar" in result and result["finalized_bar"] is not None:
+                finalized_bar = result["finalized_bar"]
+                if audio_array is not None and len(audio_array) > 0:
+                    self.emotion_processor.cache_audio_for_bar(finalized_bar.id, audio_array)
+                    logger.debug(f"🎵 Cached audio for finalized bar {finalized_bar.id}")
+            elif action == "append":
+                # For append actions, cache/update audio for the current bar
+                # This builds up audio as the bar grows
+                if audio_array is not None and len(audio_array) > 0:
+                    self.emotion_processor.cache_audio_for_bar(bar.id, audio_array)
             
             # Build response for WebSocket
             response = {

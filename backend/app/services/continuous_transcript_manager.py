@@ -12,8 +12,15 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any
 from dataclasses import dataclass, field
+import pytz
 
 logger = logging.getLogger(__name__)
+
+
+def get_ist_now() -> datetime:
+    """Get timezone-aware IST datetime (India Standard Time)"""
+    ist = pytz.timezone('Asia/Kolkata')
+    return datetime.now(ist)
 
 
 @dataclass
@@ -28,10 +35,10 @@ class TranscriptBar:
     confidence: float
     word_count: int = 0
     status: str = "active"  # active, processing_emotion, finalized
-    emotion: Optional[str] = None
-    emotion_confidence: Optional[float] = None
+    emotion: Optional[str] = "neutral"  # ✅ Default to neutral instead of None
+    emotion_confidence: Optional[float] = 0.0  # ✅ Default to 0.0 instead of None
     emotion_scores: Optional[Dict[str, float]] = None
-    emotion_guidance: Optional[str] = None
+    emotion_guidance: Optional[dict] = None  # ✅ Changed from str to dict
     metadata: Dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self):
@@ -42,15 +49,15 @@ class TranscriptBar:
             "speaker_id": self.speaker,  # ✅ Frontend expects speaker_id
             "speaker_name": self.metadata.get("speaker_name", "Unknown"),  # ✅ Add speaker_name
             "text": self.text,
-            "timestamp": self.started_at.isoformat(),  # ✅ Frontend expects timestamp
-            "updated_at": self.updated_at.isoformat(),
+            "timestamp": self.started_at.isoformat() if self.started_at.tzinfo else self.started_at.replace(tzinfo=pytz.timezone('Asia/Kolkata')).isoformat(),  # ✅ Ensure IST timezone
+            "updated_at": self.updated_at.isoformat() if self.updated_at.tzinfo else self.updated_at.replace(tzinfo=pytz.timezone('Asia/Kolkata')).isoformat(),
             "confidence": self.confidence,
             "word_count": self.word_count,
             "status": self.status,
-            "emotion": self.emotion,
-            "emotion_confidence": self.emotion_confidence,
-            "emotion_scores": self.emotion_scores,
-            "emotion_guidance": self.emotion_guidance,
+            "emotion": self.emotion or "neutral",  # ✅ Always provide emotion (default neutral)
+            "emotion_confidence": self.emotion_confidence or 0.0,  # ✅ Always provide confidence
+            "emotion_scores": self.emotion_scores or {},  # ✅ Always provide scores
+            "emotion_guidance": self.emotion_guidance or {},  # ✅ Always provide guidance (empty dict if not ready)
             "metadata": self.metadata,
             "duration": self.duration_seconds()  # ✅ Add duration for frontend
         }
@@ -104,7 +111,7 @@ class ContinuousTranscriptManager:
             dict with 'action' (append/create) and 'bar' (TranscriptBar object)
         """
         if timestamp is None:
-            timestamp = datetime.utcnow()
+            timestamp = get_ist_now()
         
         async with self._lock:
             # Initialize session if needed
@@ -120,7 +127,10 @@ class ContinuousTranscriptManager:
             )
             
             if need_new_bar:
-                # Finalize current bar if exists
+                # Store reference to bar being finalized (for audio caching)
+                finalized_bar = current_bar
+                
+                # Finalize current bar if exists (this will queue it for emotion processing)
                 if current_bar:
                     await self._finalize_bar(current_bar)
                 
@@ -144,13 +154,13 @@ class ContinuousTranscriptManager:
                 
                 logger.info(f"📝 Created new transcript bar: session={session_id}, speaker={speaker}, bar_id={new_bar.id}")
                 
-                # Queue for emotion processing immediately (non-blocking)
-                await self.emotion_queue.put(new_bar)
-                logger.debug(f"🎭 Queued bar {new_bar.id} for emotion processing")
+                # ❌ DON'T queue new bar for emotion - only finalized bars get emotion processing
+                # The previous bar was already queued in _finalize_bar() above
                 
                 return {
                     "action": "create",
                     "bar": new_bar,
+                    "finalized_bar": finalized_bar,  # Return finalized bar for audio caching
                     "reason": self._get_new_bar_reason(current_bar, speaker, timestamp)
                 }
             else:
@@ -246,7 +256,7 @@ class ContinuousTranscriptManager:
         This does NOT block - emotion processing happens asynchronously.
         """
         bar.status = "processing_emotion"
-        bar.updated_at = datetime.utcnow()
+        bar.updated_at = get_ist_now()
         
         logger.info(f"🔒 Finalized bar: session={bar.session_id}, bar_id={bar.id}, duration={bar.duration_seconds():.1f}s")
         

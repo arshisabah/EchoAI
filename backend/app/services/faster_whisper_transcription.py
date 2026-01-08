@@ -23,24 +23,39 @@ class FasterWhisperService:
         self.model_lock = threading.Lock()
         
     def initialize_model(self):
-        """Lazy load the model on first use"""
+        """Lazy load the model on first use with GPU support"""
         if self.model is not None:
             return
             
         try:
+            import torch
             from faster_whisper import WhisperModel
             
-            # Use base model for optimal accuracy with aggressive speed tuning
-            logger.info("🔧 Loading Faster-Whisper model (base - low latency)...")
+            # Detect best available device
+            # AMD GPUs: Use CUDA (ROCm provides CUDA compatibility)
+            # NVIDIA GPUs: Use CUDA
+            # CPU: Fallback
+            device = "cpu"
+            compute_type = "int8"  # Default for CPU
+            
+            if torch.cuda.is_available():
+                device = "cuda"
+                compute_type = "float16"  # Use FP16 on GPU for speed
+                logger.info(f"🎮 GPU detected: {torch.cuda.get_device_name(0)} - using CUDA acceleration")
+            else:
+                logger.info("💻 No GPU detected - using CPU with int8 quantization")
+            
+            # Use base model for better accuracy
+            logger.info(f"🔧 Loading Faster-Whisper 'base' model on {device}...")
             self.model = WhisperModel(
-                "base",  # base=best accuracy/speed tradeoff
-                device="cpu",
-                compute_type="int8",  # Optimized for CPU speed
-                num_workers=1,  # Single worker for lowest latency
+                "base",  # Base model for balanced speed/accuracy
+                device=device,
+                compute_type=compute_type,
+                num_workers=4 if device == "cuda" else 1,  # More workers on GPU
                 download_root=None,
                 local_files_only=False
             )
-            logger.info("✅ Faster-Whisper model loaded successfully (base - low latency mode)")
+            logger.info(f"✅ Faster-Whisper 'base' model loaded successfully on {device}")
             
         except Exception as e:
             logger.error(f"❌ Failed to load Faster-Whisper model: {e}")
@@ -98,7 +113,7 @@ class FasterWhisperService:
             self.active_sessions[session_id]["last_audio_time"] = asyncio.get_event_loop().time()
             self.active_sessions[session_id]["silence_flag_set"] = False
             
-            logger.info(f"🎵 Added {len(audio_bytes)} bytes, buffer now: {len(self.active_sessions[session_id]['accumulated_audio'])} bytes")
+            # Reduced logging for performance
             
             return True
             
@@ -110,9 +125,9 @@ class FasterWhisperService:
         """Continuously process audio buffer"""
         try:
             session = self.active_sessions[session_id]
-            process_interval = 0.05  # Process every 50ms (maximum aggression)
-            min_audio_length = 8192  # 0.25 seconds minimum (absolute minimum)
-            silence_threshold = 10.0  # 10 seconds of silence
+            process_interval = 0.05  # Process every 50ms (balanced)
+            min_audio_length = 8192  # 0.25 seconds minimum (better quality)
+            silence_threshold = 15.0  # 15 seconds of silence (as required)
             duration_threshold = 30.0  # 30 seconds continuous speaking
             
             session["last_audio_time"] = asyncio.get_event_loop().time()
@@ -161,53 +176,62 @@ class FasterWhisperService:
                 audio_data = bytes(session["accumulated_audio"])
                 
                 if len(audio_data) < min_audio_length:
-                    logger.info(f"⏳ Buffer too small: {len(audio_data)}/{min_audio_length} bytes - waiting...")
+                    # Reduced logging for performance
                     continue
-                
-                logger.info(f"🎤 Processing {len(audio_data)} bytes of audio")
                 
                 # Convert to numpy array
                 audio_array = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
                 
                 # Check audio level
-                audio_level = np.abs(audio_array).max()
                 audio_rms = np.sqrt(np.mean(audio_array**2))
-                logger.info(f"🔊 Audio level - max: {audio_level:.4f}, rms: {audio_rms:.4f}")
                 
-                # Skip if audio is too quiet (likely silence)
+                # Log audio level when it changes significantly
+                logger.info(f"🎤 Audio RMS: {audio_rms:.6f}, Buffer: {len(audio_data)} bytes")
+                
+                # Skip if audio is too quiet (likely silence) - raised threshold for better quality
                 if audio_rms < 0.001:
-                    logger.warning(f"⚠️ Audio too quiet (RMS: {audio_rms:.4f}), skipping transcription")
                     session["accumulated_audio"] = bytearray()
                     continue
                 
                 # Transcribe
                 try:
-                    logger.info(f"🔄 Calling model.transcribe() for {len(audio_array)} samples")
                     segments, info = self.model.transcribe(
                         audio_array,
-                        language="en",  # Force English language
-                        task="transcribe",  # Transcribe (don't translate)
-                        beam_size=1,  # Greedy decoding for speed
-                        best_of=1,  # No sampling for speed
-                        temperature=0.0,  # Single temperature for speed
-                        vad_filter=False,  # Disable VAD
+                        language="en",
+                        task="transcribe",
+                        beam_size=5,  # Better accuracy with base model
+                        best_of=5,  # Sample multiple candidates
+                        temperature=0.0,  # Deterministic
+                        vad_filter=False,  # DISABLE VAD - it's filtering out real speech
                         word_timestamps=False,  # No word timestamps for speed
-                        no_speech_threshold=0.4,  # Balanced threshold
+                        no_speech_threshold=0.25,  # Lower threshold to detect more speech
                         compression_ratio_threshold=2.4,
                         log_prob_threshold=-1.0,
-                        condition_on_previous_text=False  # Faster without context
+                        condition_on_previous_text=False,  # DISABLE - prevents hallucination repetition
+                        initial_prompt=None
                     )
                     
-                    # Convert generator to list to check if empty
+                    # Convert generator to list
                     segments_list = list(segments)
-                    logger.info(f"📊 Model returned {len(segments_list)} segments")
+                    
+                    # Log transcription results AND Whisper's analysis
+                    logger.info(f"🎯 Transcribed {len(segments_list)} segments, audio_rms={audio_rms:.6f}")
+                    logger.info(f"   📊 Whisper info: language={info.language}, language_probability={info.language_probability:.3f}")
                     
                     # Build full text from all segments
                     full_text = ""
                     for segment in segments_list:
                         text = segment.text.strip()
+                        
+                        # CRITICAL: Reject segments where Whisper itself thinks it's not speech
+                        if segment.no_speech_prob > 0.5:
+                            logger.warning(f"   ⚠️ REJECTED: '{text}' (no_speech_prob={segment.no_speech_prob:.3f} too high)")
+                            continue
+                        
                         if text:
                             full_text += text + " "
+                            # Log segment with probability scores
+                            logger.info(f"   📝 Segment: '{text}' (prob={segment.avg_logprob:.3f}, no_speech_prob={segment.no_speech_prob:.3f})")
                     
                     full_text = full_text.strip()
                     
@@ -215,10 +239,20 @@ class FasterWhisperService:
                         # Check if we need to start a new bar (duration/silence threshold reached)
                         should_finalize = session.get("create_new_bar", False)
                         
-                        # ✅ FIX: Reset accumulated text BEFORE starting new bar
+                        # ✅ FIX: If bar should be finalized, DON'T send cumulative text to new bar
+                        # The finalized bar already has the complete text
                         if should_finalize:
-                            logger.info(f"🔄 Finalizing current bar and starting fresh accumulation")
-                            session["accumulated_text"] = ""  # Reset for new bar
+                            logger.info(f"🔒 Bar finalization detected - skipping duplicate text broadcast")
+                            # Reset everything for clean new bar
+                            session["accumulated_text"] = ""
+                            session["accumulated_audio"] = bytearray()
+                            session["last_transcript_text"] = ""
+                            session["bar_start_time"] = asyncio.get_event_loop().time()
+                            session["create_new_bar"] = False
+                            session["silence_flag_set"] = False
+                            session["duration_flag_set"] = False
+                            # Don't send this text - it's already in the finalized bar
+                            continue
                         
                         # Accumulate text for current bar
                         if session["accumulated_text"]:
@@ -229,8 +263,6 @@ class FasterWhisperService:
                         # Send CUMULATIVE text (entire accumulated transcript for this bar)
                         text_to_send = session["accumulated_text"]
                         
-                        logger.info(f"📝 Transcript chunk: '{full_text[:30]}...' → Cumulative: '{text_to_send[:50]}...' (is_final={should_finalize})")
-                        
                         # Send transcript
                         result = {
                             "text": text_to_send,
@@ -239,9 +271,7 @@ class FasterWhisperService:
                             "speech_final": should_finalize,
                         }
                         
-                        logger.info(f"📤 Calling callback (is_final={should_finalize})")
                         await session["callback"](result)
-                        logger.info(f"✅ Callback completed")
                         
                         # Update tracking
                         session["last_transcript_text"] = full_text
@@ -254,15 +284,10 @@ class FasterWhisperService:
                             session["silence_flag_set"] = False
                             session["duration_flag_set"] = False
                             session["last_transcript_text"] = ""
-                            # Note: accumulated_text already reset before accumulating
-                            logger.info(f"🆕 Bar finalized, timers reset")
                     else:
                         if not full_text:
-                            logger.info(f"⚠️ No speech detected in audio buffer, clearing buffer")
-                            # Clear buffer to avoid accumulating silence forever
+                            # Clear buffer to avoid accumulating silence
                             session["accumulated_audio"] = bytearray()
-                        else:
-                            logger.debug(f"⏭️ Duplicate transcript, skipping")
                 
                 except Exception as e:
                     logger.error(f"❌ Transcription error: {e}", exc_info=True)

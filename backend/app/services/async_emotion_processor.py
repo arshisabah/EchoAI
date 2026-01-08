@@ -77,6 +77,11 @@ class AsyncEmotionProcessor:
                     timeout=1.0  # Check running status every second
                 )
                 
+                # ✅ Skip if already processed (prevent duplicates)
+                if bar.id in self.processed_bars:
+                    logger.debug(f"⏭️ Skipping already processed bar: {bar.id}")
+                    continue
+                
                 logger.info(f"🎭 Processing emotion for bar: {bar.id} (session: {bar.session_id})")
                 
                 # Process emotion asynchronously
@@ -105,6 +110,13 @@ class AsyncEmotionProcessor:
             
             # Mark as processed
             self.processed_bars.add(bar.id)
+            
+            # Auto-cleanup processed bars (keep max 1000 entries to prevent memory leak)
+            if len(self.processed_bars) > 1000:
+                # Convert to list, remove oldest 200, convert back to set
+                bars_list = list(self.processed_bars)
+                self.processed_bars = set(bars_list[200:])
+                logger.debug(f"🧹 Cleaned up old processed bars, now tracking {len(self.processed_bars)} bars")
             
             start_time = datetime.utcnow()
             
@@ -178,18 +190,21 @@ class AsyncEmotionProcessor:
             
             room_manager = get_meeting_room_manager()
             
-            # Prepare emotion update message - use transcript_bar format with append action
+            # ✅ FIX: Use dedicated emotion_update message type to prevent bar duplication
             update_message = {
-                "type": "transcript_bar",
-                "action": "append",
-                "bar": bar.to_dict(),
+                "type": "emotion_update",
+                "entry_id": bar.id,
+                "emotion": bar.emotion,
+                "emotion_confidence": bar.emotion_confidence,
+                "emotion_guidance": bar.emotion_guidance,
+                "emotion_scores": bar.emotion_scores,
                 "timestamp": bar.updated_at.isoformat()
             }
             
             # Broadcast to all participants in the session
             await room_manager.broadcast_to_room(bar.session_id, update_message)
             
-            logger.debug(f"📡 Broadcast emotion update for bar {bar.id} to session {bar.session_id}")
+            logger.info(f"📡 Broadcast emotion update for bar {bar.id}: {bar.emotion} (confidence: {bar.emotion_confidence:.2f})")
             
         except Exception as e:
             logger.warning(f"Failed to broadcast emotion update for bar {bar.id}: {e}")
@@ -231,7 +246,7 @@ class AsyncEmotionProcessor:
             "scores": scores
         }
     
-    async def _get_emotion_guidance(self, emotion: str, text: str) -> str:
+    async def _get_emotion_guidance(self, emotion: str, text: str) -> dict:
         """Get contextual guidance for detected emotion"""
         try:
             guidance_data = self.guidance_engine.get_guidance(
@@ -239,10 +254,21 @@ class AsyncEmotionProcessor:
                 text=text,
                 confidence=0.5
             )
-            return guidance_data.get("suggestion", "")
+            # Return full guidance object with all fields
+            return {
+                "primary_guidance": guidance_data.get("primary_guidance", guidance_data.get("suggestion", "")),
+                "recommended_phrases": guidance_data.get("recommended_phrases", []),
+                "response_strategies": guidance_data.get("response_strategies", []),
+                "suggestion": guidance_data.get("suggestion", guidance_data.get("primary_guidance", ""))
+            }
         except Exception as e:
             logger.warning(f"Failed to get emotion guidance: {e}")
-            return ""
+            return {
+                "primary_guidance": "Analysis in progress...",
+                "recommended_phrases": [],
+                "response_strategies": [],
+                "suggestion": "Analysis in progress..."
+            }
     
     def cache_audio_for_bar(self, bar_id: str, audio_array: np.ndarray):
         """
