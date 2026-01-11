@@ -49,6 +49,7 @@ const MeetingRoom = ({ userInfo }) => {
   // ✅ FIX: Use ref to always have latest connection state
   const isTranscriptConnectedRef = useRef(false);
   const isServerReadyRef = useRef(false);
+  const isAudioEnabledRef = useRef(true); // Track mic state for audio transmission
 
   console.log("MeetingRoom Loaded → roomId:", roomId, "password:", roomPassword);
 
@@ -171,6 +172,7 @@ const MeetingRoom = ({ userInfo }) => {
 
   // ------------------------------
   // AUDIO RECORDER - ✅ FIXED: Use ref to avoid stale closure
+  // Recording stays ON throughout meeting, but only sends audio when mic is enabled
   // ------------------------------
   const {
     isRecording,
@@ -178,10 +180,12 @@ const MeetingRoom = ({ userInfo }) => {
     startRecording,
     stopRecording,
   } = useAudioRecorder((pcmBytes) => {
-    // ✅ FIX: Use refs to always get latest connection state
-    if (isTranscriptConnectedRef.current && isServerReadyRef.current) {
+    // ✅ FIX: Check connection state AND mic state before sending
+    if (isTranscriptConnectedRef.current && isServerReadyRef.current && isAudioEnabledRef.current) {
         console.log("🎵 Sending audio chunk:", pcmBytes.length, "bytes");
         sendAudioChunk(pcmBytes);
+    } else if (!isAudioEnabledRef.current) {
+        console.log("🔇 Mic muted - audio chunk not sent (recording continues)");
     } else {
         console.warn("⚠️ Audio chunk dropped - Server not ready or WebSocket not connected", {
           isTranscriptConnected: isTranscriptConnectedRef.current,
@@ -191,7 +195,8 @@ const MeetingRoom = ({ userInfo }) => {
   });
 
   // ------------------------------
-  // CUSTOM AUDIO TOGGLE - Controls both WebRTC and transcription recording
+  // CUSTOM AUDIO TOGGLE - Controls WebRTC audio and audio transmission
+  // Recording stays ON throughout meeting - mic state only controls audio transmission
   // ------------------------------
   const toggleAudio = useCallback(() => {
     console.log(`🎤 Toggling audio: ${isAudioEnabled} -> ${!isAudioEnabled}`);
@@ -199,27 +204,27 @@ const MeetingRoom = ({ userInfo }) => {
     // Toggle WebRTC audio (mute/unmute for other participants)
     toggleAudioWebRTC();
     
-    // Stop/start recording when mic is toggled to respect recording state
-    if (isAudioEnabled) {
-      console.log("🔇 Microphone disabled - stopping transcription recording");
-      stopRecording();
+    // Note: Recording continues regardless of mic state
+    // Audio chunks are only sent when mic is enabled (checked in useAudioRecorder callback)
+    if (!isAudioEnabled) {
+      console.log("🔊 Microphone enabled - audio will be transmitted");
     } else {
-      console.log("🔊 Microphone enabled - starting transcription recording");
-      if (isConnected && isServerReady && !isRecording) {
-        startRecording().catch(err => {
-          console.error("❌ Failed to restart recording:", err);
-        });
-      }
+      console.log("🔇 Microphone muted - audio will NOT be transmitted (recording continues)");
     }
-  }, [isAudioEnabled, toggleAudioWebRTC, isConnected, isServerReady, isRecording, startRecording, stopRecording]);
+  }, [isAudioEnabled, toggleAudioWebRTC]);
 
   // ------------------------------
-  // UPDATE CONNECTION REF - ✅ FIX: Keep ref in sync with connection state
+  // UPDATE REFS - ✅ FIX: Keep refs in sync with state
   // ------------------------------
   useEffect(() => {
     isTranscriptConnectedRef.current = isTranscriptConnected;
     console.log("📡 Connection state updated - isTranscriptConnected:", isTranscriptConnected);
   }, [isTranscriptConnected]);
+
+  useEffect(() => {
+    isAudioEnabledRef.current = isAudioEnabled;
+    console.log("🎤 Mic state updated - isAudioEnabled:", isAudioEnabled);
+  }, [isAudioEnabled]);
 
   // ------------------------------
   // UPDATE SERVER READY REF - ✅ FIX: Keep ref in sync with server ready state from useWebSocket
@@ -273,7 +278,7 @@ const MeetingRoom = ({ userInfo }) => {
     const initMedia = async () => {
       try {
         console.log("🎥 Initializing camera and microphone...");
-        const stream = await startLocalMedia(false);
+        const stream = await startLocalMedia(true);  // ✅ Enable video by default
         
         if (mounted && stream) {
           console.log("✅ Local media initialized successfully:", {
@@ -306,6 +311,7 @@ const MeetingRoom = ({ userInfo }) => {
   }, []);
 
   // Start recording once WebSocket is connected AND server is ready
+  // Recording stays ON throughout meeting regardless of mic state
   useEffect(() => {
     if (isConnected && isServerReady && !isRecording) {
       console.log("✅ WebSocket connected AND server ready, starting audio recording...");
@@ -315,6 +321,7 @@ const MeetingRoom = ({ userInfo }) => {
         isTranscriptConnected,
         isRecording
       });
+      console.log("📌 Recording will stay ON throughout meeting. Mic state controls audio transmission only.");
       
       // Start recording with error handling
       const startAudioRecording = async () => {
@@ -344,7 +351,8 @@ const MeetingRoom = ({ userInfo }) => {
   useEffect(() => {
     if (!transcripts.length) return;
 
-    const latest = transcripts[0];
+    // ✅ FIX: Get the LATEST transcript (last in array, not first)
+    const latest = transcripts[transcripts.length - 1];
     
     // Debug logging (only in development)
     if (import.meta.env.DEV) {

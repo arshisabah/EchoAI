@@ -113,11 +113,12 @@ def analyze_audio_emotion(audio_array: np.ndarray, sample_rate: int = 16000) -> 
 
     # If model is not available, return fallback response
     if not _MODEL_AVAILABLE or _model is None:
-        logger.debug("⚠️ Audio emotion model not available, using fallback.")
+        logger.warning("⚠️ Audio emotion model not available. Returning neutral emotion.")
+        logger.warning("   This is expected if the model failed to load at startup.")
         return {
             "emotion": "neutral",
-            "confidence": 0.5,
-            "scores": {"neutral": 0.5, "happy": 0.2, "sad": 0.15, "angry": 0.1, "fearful": 0.05}
+            "confidence": 0.0,
+            "scores": {}
         }
 
     # Ensure numpy array and float32 values in [-1, 1] ideally

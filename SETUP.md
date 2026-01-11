@@ -82,7 +82,7 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 ### Port already in use:
 ```bash
 # Change port in backend
-uvicorn app.main:app --reload --port 8001
+uvicorn app.main:app --reload --port 8000
 
 # Change port in frontend (vite.config.js)
 ```

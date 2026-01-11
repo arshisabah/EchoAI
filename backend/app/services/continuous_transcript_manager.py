@@ -102,7 +102,8 @@ class ContinuousTranscriptManager:
         text: str,
         confidence: float,
         timestamp: Optional[datetime] = None,
-        speaker_name: str = "Unknown"
+        speaker_name: str = "Unknown",
+        is_final: bool = False
     ) -> Dict[str, Any]:
         """
         Process incoming transcription and determine whether to append or create new bar.
@@ -122,7 +123,8 @@ class ContinuousTranscriptManager:
             current_bar = self.active_bars.get(session_id)
             
             # Determine if we need a new bar
-            need_new_bar = self._should_create_new_bar(
+            # Force new bar if is_final=True (from silence/duration threshold)
+            need_new_bar = is_final or self._should_create_new_bar(
                 session_id, speaker, current_bar, timestamp
             )
             
@@ -132,6 +134,8 @@ class ContinuousTranscriptManager:
                 
                 # Finalize current bar if exists (this will queue it for emotion processing)
                 if current_bar:
+                    if is_final:
+                        logger.info(f"🎯 Forcing bar finalization due to is_final=True (silence/duration threshold)")
                     await self._finalize_bar(current_bar)
                 
                 # Create new bar
@@ -258,10 +262,12 @@ class ContinuousTranscriptManager:
         bar.status = "processing_emotion"
         bar.updated_at = get_ist_now()
         
-        logger.info(f"🔒 Finalized bar: session={bar.session_id}, bar_id={bar.id}, duration={bar.duration_seconds():.1f}s")
+        logger.info(f"🔒 Finalized bar: session={bar.session_id}, bar_id={bar.id}, duration={bar.duration_seconds():.1f}s, text='{bar.text[:50]}...'")
         
         # Queue for async emotion processing
+        queue_size_before = self.emotion_queue.qsize()
         await self.emotion_queue.put(bar)
+        logger.info(f"📤 Added bar {bar.id} to emotion queue (queue size: {queue_size_before} -> {self.emotion_queue.qsize()})")
     
     async def get_session_bars(self, session_id: str) -> list:
         """Get all transcript bars for a session"""

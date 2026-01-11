@@ -144,7 +144,8 @@ class OrchestratorService:
         text: str,
         confidence: float,
         audio_array: Optional[np.ndarray] = None,
-        speaker_name: str = "Unknown"
+        speaker_name: str = "Unknown",
+        is_final: bool = False
     ) -> Dict[str, Any]:
         """
         Process transcription using continuous transcript bar management.
@@ -161,7 +162,8 @@ class OrchestratorService:
                 text=text,
                 confidence=confidence,
                 timestamp=get_ist_now(),
-                speaker_name=speaker_name
+                speaker_name=speaker_name,
+                is_final=is_final
             )
             
             bar = result["bar"]

@@ -12,6 +12,25 @@ import threading
 logger = logging.getLogger(__name__)
 
 
+def remove_repetitions(text: str) -> str:
+    """Remove immediate word repetitions (hello hello -> hello)"""
+    if not text:
+        return text
+    
+    words = text.split()
+    if len(words) <= 1:
+        return text
+    
+    # Remove consecutive duplicate words
+    result = [words[0]]
+    for i in range(1, len(words)):
+        # Only add if different from previous word (case-insensitive)
+        if words[i].lower().rstrip('.,!?') != words[i-1].lower().rstrip('.,!?'):
+            result.append(words[i])
+    
+    return ' '.join(result)
+
+
 class FasterWhisperService:
     """Real-time transcription using Faster-Whisper (local, free)"""
     
@@ -130,7 +149,7 @@ class FasterWhisperService:
             session = self.active_sessions[session_id]
             process_interval = 0.5  # Process every 500ms for better quality
             min_audio_length = 48000  # 1.5 seconds minimum for clear transcription
-            silence_threshold = 15.0  # 15 seconds of silence (as required)
+            silence_threshold = 5.0  # 5 seconds of silence for faster emotion processing
             duration_threshold = 30.0  # 30 seconds continuous speaking
             
             session["last_audio_time"] = asyncio.get_event_loop().time()
@@ -163,17 +182,51 @@ class FasterWhisperService:
                 bar_duration = current_time - session.get("bar_start_time", current_time)
                 
                 # Check if we should create a new bar on NEXT transcript
-                # 1. After 3 seconds of silence
+                # 1. After 15 seconds of silence - FINALIZE IMMEDIATELY for emotion processing
                 if time_since_audio > silence_threshold and not session.get("silence_flag_set", False):
                     session["create_new_bar"] = True
                     session["silence_flag_set"] = True
-                    logger.info(f"🔇 {silence_threshold}s silence detected - will create new bar on next speech")
+                    logger.info(f"🔇 {silence_threshold}s silence detected - forcing bar finalization for emotion processing")
+                    
+                    # ✅ Trigger immediate finalization by sending final=True callback
+                    session_callback = session.get("callback")
+                    accumulated_text = session.get("accumulated_text", "")
+                    if session_callback and accumulated_text:
+                        try:
+                            await session_callback({
+                                "text": accumulated_text,
+                                "is_final": True,
+                                "confidence": 1.0,
+                                "speech_final": True,
+                                "create_new_bar": True
+                            })
+                            session["accumulated_text"] = ""  # Clear after sending
+                            logger.info(f"✅ Sent final transcript for emotion processing after silence: '{accumulated_text[:50]}...'")
+                        except Exception as e:
+                            logger.error(f"❌ Error sending final transcript: {e}")
                 
-                # 2. After 30 seconds of continuous speaking
+                # 2. After 30 seconds of continuous speaking - FINALIZE IMMEDIATELY
                 if bar_duration > duration_threshold and not session.get("duration_flag_set", False):
                     session["create_new_bar"] = True
                     session["duration_flag_set"] = True
-                    logger.info(f"⏱️ 30s duration reached - will create new bar on next speech")
+                    logger.info(f"⏱️ 30s duration reached - forcing bar finalization for emotion processing")
+                    
+                    # ✅ Trigger immediate finalization
+                    session_callback = session.get("callback")
+                    accumulated_text = session.get("accumulated_text", "")
+                    if session_callback and accumulated_text:
+                        try:
+                            await session_callback({
+                                "text": accumulated_text,
+                                "is_final": True,
+                                "confidence": 1.0,
+                                "speech_final": True,
+                                "create_new_bar": True
+                            })
+                            session["accumulated_text"] = ""
+                            logger.info(f"✅ Sent final transcript for emotion processing after 30s duration: '{accumulated_text[:50]}...'")
+                        except Exception as e:
+                            logger.error(f"❌ Error sending final transcript: {e}")
                 
                 # Get accumulated audio
                 audio_data = bytes(session["accumulated_audio"])
@@ -204,17 +257,18 @@ class FasterWhisperService:
                         task="transcribe",
                         beam_size=5,  # Best quality beam search
                         best_of=5,  # Consider multiple candidates
-                        temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],  # Temperature fallback for difficult audio
+                        temperature=0.0,  # Use greedy decoding (0.0) to reduce hallucinations
                         vad_filter=True,  # VAD for better speech detection
                         vad_parameters=dict(min_silence_duration_ms=500, threshold=0.3),  # ✅ BALANCED VAD - not too aggressive
                         word_timestamps=False,
                         no_speech_threshold=0.6,  # ✅ Moderate threshold (0.5 too low, 0.8 too high)
-                        compression_ratio_threshold=2.4,
+                        compression_ratio_threshold=2.0,  # Lower threshold to catch repetitions
                         log_prob_threshold=-1.0,
                         condition_on_previous_text=False,  # Disable to prevent hallucinations
                         initial_prompt=None,  # ✅ NO PROMPT - prevents "thank you" hallucinations
                         without_timestamps=True,  # Better for continuous speech
-                        patience=1.0  # More patience for better quality
+                        patience=1.0,  # More patience for better quality
+                        repetition_penalty=1.2  # Penalize repetitions
                     )
                     
                     # Convert generator to list
@@ -241,6 +295,13 @@ class FasterWhisperService:
                             logger.info(f"   📝 Segment: '{text}' (prob={segment.avg_logprob:.3f}, no_speech_prob={segment.no_speech_prob:.3f})")
                     
                     full_text = full_text.strip()
+                    
+                    # Remove word repetitions (hello hello -> hello)
+                    if full_text:
+                        original_text = full_text
+                        full_text = remove_repetitions(full_text)
+                        if original_text != full_text:
+                            logger.info(f"   🔧 Removed repetitions: '{original_text}' -> '{full_text}'")
                     
                     if full_text and full_text != session["last_transcript_text"]:
                         # Check if we need to start a new bar (duration/silence threshold reached)

@@ -72,11 +72,15 @@ class EmotionService:
             emotions_str = ", ".join(self.supported_emotions)
             
             prompt = (
-                "Analyze the emotion in the following text. "
-                f"Choose from: {emotions_str}. "
-                "Respond with JSON: {'emotion': '...', 'confidence': 0-1, "
-                "'scores': {emotion: score}}.\n\n"
-                f"Text: \"{text}\""
+                "You are an expert emotion analyst. Analyze the emotion in the text below.\n\n"
+                f"Available emotions: {emotions_str}\n\n"
+                "Rules:\n"
+                "- Choose the most dominant emotion\n"
+                "- Confidence should be 0.7-0.95 for clear emotions, 0.5-0.7 for subtle emotions\n"
+                "- Provide scores for all emotions (must sum to ~1.0)\n\n"
+                "Respond ONLY with valid JSON in this exact format:\n"
+                "{\"emotion\": \"emotion_name\", \"confidence\": 0.85, \"scores\": {\"happy\": 0.1, \"sad\": 0.05, ...}}\n\n"
+                f"Text to analyze: \"{text}\""
             )
             
             logger.debug(f"📤 Sending request to OpenAI GPT-4o-mini...")
@@ -106,6 +110,27 @@ class EmotionService:
                 content = content.replace("```", "").strip()
 
             result = json.loads(content)
+            
+            # 🔥 BOOST: If emotion has clear dominance in scores, boost confidence
+            if "scores" in result and result.get("emotion"):
+                scores = result["scores"]
+                primary_emotion = result["emotion"]
+                if primary_emotion in scores:
+                    primary_score = scores[primary_emotion]
+                    other_scores = [v for k, v in scores.items() if k != primary_emotion]
+                    
+                    # If primary emotion is clearly dominant (2x any other), boost confidence
+                    if other_scores and primary_score > 0:
+                        max_other = max(other_scores)
+                        dominance_ratio = primary_score / max_other if max_other > 0 else 10.0
+                        
+                        if dominance_ratio >= 2.0:  # Clear dominance
+                            original_conf = result.get("confidence", 0.5)
+                            # Boost to 0.75-0.95 range based on dominance
+                            boosted_conf = min(0.95, 0.75 + (dominance_ratio - 2.0) * 0.1)
+                            result["confidence"] = max(original_conf, boosted_conf)
+                            logger.info(f"🔥 Boosted confidence: {original_conf:.2f} → {result['confidence']:.2f} (dominance ratio: {dominance_ratio:.2f})")
+            
             logger.info(f"✅ [EMOTION] Parsed emotion result: {result.get('emotion', 'unknown')} (confidence: {result.get('confidence', 0):.2f})")
             return result
 
@@ -113,10 +138,12 @@ class EmotionService:
             logger.warning(f"⚠️ Failed to parse OpenAI response as JSON: {e}")
             logger.warning(f"   Response content: {content[:200]}")
             # Fallback with keyword matching
-            return self._fallback_emotion_detection(text)
+            logger.warning("🔄 Falling back to keyword-based analysis")
+            return self._fallback_emotion_analysis(text)
         except Exception as e:
             logger.error(f"❌ [EMOTION] Error during OpenAI analysis: {e}", exc_info=True)
-            return self._fallback_emotion_detection(text)
+            logger.warning("🔄 Falling back to keyword-based analysis")
+            return self._fallback_emotion_analysis(text)
             
             try:
                 # ✅ FIX: Remove markdown code blocks if present
@@ -415,16 +442,24 @@ async def analyze_text_and_audio_combined(
 
     # --- Analyze audio-based emotion (optional) ---
     audio_result = None
-    if audio_array is not None:
+    if audio_array is not None and len(audio_array) > 0:
         logger.debug(f"🎤 Analyzing audio-based emotion (array length: {len(audio_array)})...")
         try:
             from app.modules.audio_emotion_analyzer import analyze_audio_emotion
             import asyncio
             audio_result = await asyncio.to_thread(analyze_audio_emotion, audio_array, sample_rate)
-            logger.info(f"✅ Audio emotion: {audio_result.get('emotion', 'neutral')} (confidence: {audio_result.get('confidence', 0):.2f})")
+            
+            # ✅ Check if audio model actually provided a result or just returned neutral fallback
+            audio_confidence = audio_result.get('confidence', 0.0)
+            if audio_confidence > 0.0:
+                logger.info(f"✅ Audio emotion: {audio_result.get('emotion', 'neutral')} (confidence: {audio_confidence:.2f})")
+            else:
+                logger.warning(f"⚠️ Audio emotion model unavailable, ignoring audio result")
+                audio_result = None  # Ignore the audio result if model is not available
+                
         except Exception as e:
             logger.error(f"❌ Audio emotion analysis failed: {e}", exc_info=True)
-            audio_result = {"emotion": "neutral", "confidence": 0.0}
+            audio_result = None
     else:
         logger.debug("ℹ️ No audio provided for emotion analysis")
 

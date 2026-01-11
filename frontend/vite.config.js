@@ -49,12 +49,12 @@ export default defineConfig(({ mode }) => {
       // Proxy API and WebSocket requests to backend
       proxy: {
         '/api': {
-          target: 'http://172.20.89.45:8000',
+          target: env.VITE_BACKEND_URL || 'http://localhost:8000',
           changeOrigin: true,
           secure: false
         },
         '/ws/meeting': {
-          target: 'ws://172.20.89.45:8000',
+          target: (env.VITE_WS_URL || 'ws://localhost:8000'),
           ws: true,
           changeOrigin: true,
           secure: false,

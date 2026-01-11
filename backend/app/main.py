@@ -61,11 +61,28 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ Meeting room manager failed: {e}")
     
+    # Start async emotion processor
+    try:
+        from app.services.async_emotion_processor import get_async_emotion_processor
+        emotion_processor = get_async_emotion_processor()
+        await emotion_processor.start()
+        logger.info("✅ Async emotion processor started")
+    except Exception as e:
+        logger.error(f"❌ Async emotion processor failed: {e}")
+    
     logger.info("✅ EchoAI Backend ready!")
     
     yield
     
     # Cleanup
+    try:
+        from app.services.async_emotion_processor import get_async_emotion_processor
+        emotion_processor = get_async_emotion_processor()
+        await emotion_processor.stop()
+        logger.info("✅ Async emotion processor stopped")
+    except:
+        pass
+    
     try:
         from app.services.meeting_room_manager import get_meeting_room_manager
         room_manager = get_meeting_room_manager()

@@ -14,7 +14,7 @@ from app.services.continuous_transcript_manager import (
     get_continuous_transcript_manager,
     TranscriptBar
 )
-from app.services.emotion_analysis import analyze_text_and_audio_combined
+from app.services.emotion_analysis import analyze_text_and_audio_combined, get_emotion_service
 from app.services.emotion_guidance import get_emotion_guidance_engine
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ class AsyncEmotionProcessor:
     def __init__(self):
         self.transcript_manager = get_continuous_transcript_manager()
         self.guidance_engine = get_emotion_guidance_engine()
+        self.emotion_service = get_emotion_service()  # Add EmotionService instance
         self.running = False
         self.worker_task: Optional[asyncio.Task] = None
         
@@ -72,10 +73,13 @@ class AsyncEmotionProcessor:
         while self.running:
             try:
                 # Wait for a finalized bar from the queue (non-blocking)
+                logger.debug(f"📥 Waiting for bar in emotion queue (queue size: {self.transcript_manager.emotion_queue.qsize()})")
                 bar = await asyncio.wait_for(
                     self.transcript_manager.emotion_queue.get(),
                     timeout=1.0  # Check running status every second
                 )
+                
+                logger.info(f"📦 Received bar from queue: {bar.id} (text: '{bar.text[:50]}...')")
                 
                 # ✅ Skip if already processed (prevent duplicates)
                 if bar.id in self.processed_bars:
@@ -124,11 +128,11 @@ class AsyncEmotionProcessor:
             # Get audio from cache if available
             audio_array = self.audio_cache.get(bar.id)
             
-            # ✅ Accurate emotion analysis with generous timeout for best results
+            # ✅ Fast emotion analysis with OpenAI (needs sufficient time for API calls)
             try:
                 if audio_array is not None and len(audio_array) > 0:
                     # Combined text + audio emotion analysis
-                    logger.debug(f"Running combined emotion analysis for bar {bar.id}")
+                    logger.info(f"🎭 Running combined text+audio emotion analysis for bar {bar.id}: '{bar.text[:50]}...'")
                     emotion_result = await asyncio.wait_for(
                         analyze_text_and_audio_combined(
                             text=bar.text,
@@ -137,18 +141,20 @@ class AsyncEmotionProcessor:
                             text_weight=0.6,
                             audio_weight=0.4
                         ),
-                        timeout=5.0  # ✅ Generous timeout for accurate emotion detection
+                        timeout=8.0  # OpenAI API calls need 3-5 seconds, give extra buffer
                     )
+                    logger.info(f"✅ Combined emotion result: {emotion_result.get('emotion')} (conf: {emotion_result.get('confidence', 0):.2f})")
                     
                     # Clean up audio cache
                     del self.audio_cache[bar.id]
                 else:
                     # Text-only emotion analysis (fallback) with timeout
-                    logger.debug(f"Running text-only emotion analysis for bar {bar.id}")
+                    logger.info(f"🎭 Running text-only emotion analysis for bar {bar.id}: '{bar.text[:50]}...'")
                     emotion_result = await asyncio.wait_for(
                         self._analyze_text_emotion(bar.text),
-                        timeout=3.0  # ✅ Good timeout for text-only accuracy
+                        timeout=8.0  # OpenAI API calls need 3-5 seconds, give extra buffer
                     )
+                    logger.info(f"✅ Text-only emotion result: {emotion_result.get('emotion')} (conf: {emotion_result.get('confidence', 0):.2f})")
             except asyncio.TimeoutError:
                 logger.warning(f"⏱️ Emotion analysis timed out for bar {bar.id}, using neutral")
                 emotion_result = {"emotion": "neutral", "confidence": 0.5, "scores": {"neutral": 0.5}}
@@ -158,11 +164,11 @@ class AsyncEmotionProcessor:
             confidence = emotion_result.get("confidence", 0.0)
             scores = emotion_result.get("scores", {})
             
-            # Get guidance from emotion guidance engine with good timeout
+            # Get guidance from emotion guidance engine
             try:
                 guidance = await asyncio.wait_for(
                     self._get_emotion_guidance(emotion, bar.text),
-                    timeout=2.0  # ✅ Good timeout for accurate guidance generation
+                    timeout=3.0  # Guidance generation can take 2-3 seconds
                 )
             except asyncio.TimeoutError:
                 logger.warning(f"⏱️ Guidance generation timed out for bar {bar.id}")
@@ -244,40 +250,26 @@ class AsyncEmotionProcessor:
     
     async def _analyze_text_emotion(self, text: str) -> dict:
         """
-        Fallback text-only emotion analysis.
-        This is a simplified version - you might want to use a proper text emotion model.
+        Text-based emotion analysis using EmotionService (OpenAI GPT-4o-mini).
+        This provides accurate emotion detection from text.
         """
-        # Simple keyword-based emotion detection as fallback
-        text_lower = text.lower()
-        
-        emotion_keywords = {
-            "happy": ["happy", "great", "excellent", "wonderful", "fantastic", "awesome", "love", "perfect"],
-            "sad": ["sad", "unfortunately", "sorry", "disappointed", "unhappy", "terrible", "awful"],
-            "angry": ["angry", "furious", "annoyed", "frustrated", "irritated", "mad"],
-            "confused": ["confused", "unclear", "don't understand", "what", "how", "why"],
-            "excited": ["excited", "amazing", "incredible", "wow", "omg", "can't wait"],
-            "anxious": ["worried", "nervous", "anxious", "concerned", "afraid", "scared"],
-        }
-        
-        scores = {}
-        for emotion, keywords in emotion_keywords.items():
-            score = sum(1 for keyword in keywords if keyword in text_lower)
-            if score > 0:
-                scores[emotion] = score / len(keywords)
-        
-        if scores:
-            dominant_emotion = max(scores, key=scores.get)
-            confidence = scores[dominant_emotion]
-        else:
-            dominant_emotion = "neutral"
-            confidence = 0.5
-            scores = {"neutral": 0.5}
-        
-        return {
-            "emotion": dominant_emotion,
-            "confidence": confidence,
-            "scores": scores
-        }
+        try:
+            # Use the emotion service instance (already initialized in __init__)
+            logger.debug(f"🎭 Analyzing text emotion with OpenAI: '{text[:50]}...'")
+            result = await self.emotion_service.analyze_text(text)
+            logger.info(f"✅ Text emotion: {result.get('emotion', 'unknown')} (confidence: {result.get('confidence', 0):.2f})")
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to use EmotionService: {e}")
+            logger.warning(f"⚠️ Falling back to neutral emotion")
+            
+            # Return neutral as fallback - don't use keyword matching which is unreliable
+            return {
+                "emotion": "neutral",
+                "confidence": 0.3,  # Low confidence to indicate fallback
+                "scores": {"neutral": 0.3}
+            }
     
     async def _get_emotion_guidance(self, emotion: str, text: str) -> dict:
         """Get contextual guidance for detected emotion"""

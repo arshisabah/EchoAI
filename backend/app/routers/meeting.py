@@ -1138,7 +1138,8 @@ async def meeting_websocket(
                             text=text,
                             confidence=confidence,
                             audio_array=audio_array,
-                            speaker_name=display_name
+                            speaker_name=display_name,
+                            is_final=is_final
                         )
                         
                         # Extract bar data
