@@ -1332,18 +1332,19 @@ async def meeting_websocket(
         except Exception as e:
             logger.error(f"Failed to send historical transcripts to {username}: {e}", exc_info=True)
 
-        # Main receive loop with extended timeout for long meetings
-        # Timeout set to 3600 seconds (1 hour) to support long meetings
+        # Main receive loop with reasonable timeout
+        # Timeout set to 120 seconds - client should ping every 30s
         while True:
             try:
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=3600)
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=120)
             except asyncio.TimeoutError:
-                # send keep-alive ping after 1 hour of inactivity
+                # Send keep-alive ping if no message received for 120 seconds
+                logger.warning(f"⏰ No message from {username} for 120s, sending keep-alive ping")
                 await safe_send(websocket, {
-                    "type": "ping_timeout",
-                    "message": "Keep-alive: No message received within 1 hour.",
+                    "type": "ping",
+                    "message": "Keep-alive ping from server",
                     "timestamp": datetime.utcnow().isoformat()
-                }, "ping_timeout")
+                }, "ping")
                 continue
             except WebSocketDisconnect:
                 logger.info(f"WebSocketDisconnect for {username} in {room_id}")

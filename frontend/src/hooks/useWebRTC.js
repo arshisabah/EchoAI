@@ -70,6 +70,30 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
         setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
       }
       
+      // ✅ CRITICAL: Trigger renegotiation for all peer connections when video track changes
+      if (result && newState) {
+        // New video track was created, need to renegotiate
+        console.log('🔄 Renegotiating with all peers after video toggle');
+        for (const [peerId, pc] of peerConnectionsRef.current.entries()) {
+          if (pc.signalingState === 'stable') {
+            try {
+              const offer = await pc.createOffer();
+              await pc.setLocalDescription(offer);
+              
+              sendSignalingMessage({
+                type: "webrtc_offer",
+                target_id: peerId,
+                sdp: offer.sdp,
+                from_id: userId,
+              });
+              console.log(`📤 Sent renegotiation offer to ${peerId} after video toggle`);
+            } catch (err) {
+              console.error(`❌ Failed to renegotiate with ${peerId}:`, err);
+            }
+          }
+        }
+      }
+      
       // Notify server about video state change
       if (sendSignalingMessage) {
         console.log(`📹 Notifying server: video ${newState ? 'enabled' : 'disabled'}`);
@@ -83,7 +107,7 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
       console.error('❌ Video toggle error:', err);
       setError(err?.message || String(err));
     }
-  }, [isVideoEnabled, sendSignalingMessage]);
+  }, [isVideoEnabled, sendSignalingMessage, userId]);
 
   const toggleAudio = useCallback(() => {
     const newState = !isAudioEnabled;
@@ -190,56 +214,68 @@ export const useWebRTC = (roomId, userId, sendSignalingMessage) => {
         streams: event.streams?.length
       });
 
-      const stream = event.streams && event.streams[0] ? event.streams[0] : null;
-      if (!stream) {
-        console.warn(`⚠️ No stream in ontrack event for peer ${peerId}`);
-        // Create a new MediaStream with this track
-        const newStream = new MediaStream([event.track]);
-        console.log(`🔧 Created new MediaStream from track for peer ${peerId}`);
-        
-        setRemoteStreamsMap(prev => {
-          const updated = new Map(prev);
-          const existing = updated.get(peerId);
-          if (existing) {
-            existing.addTrack(event.track);
-            console.log(`➕ Added ${event.track.kind} track to existing stream for ${peerId}`);
-          } else {
-            updated.set(peerId, newStream);
-            console.log(`🆕 Created new stream entry for ${peerId}`);
-          }
-          remoteStreamsMapRef.current = updated;
-          console.log(`📺 Updated remote streams map, now has ${updated.size} streams`);
-          return updated;
-        });
-        return;
-      }
-
-      console.log(`✅ Remote stream received from peer ${peerId}:`, stream.id, 
-                  `video tracks: ${stream.getVideoTracks().length}`, 
-                  `audio tracks: ${stream.getAudioTracks().length}`);
-
-      // Verify tracks are active
-      stream.getVideoTracks().forEach((track, idx) => {
-        console.log(`📹 Video track ${idx}:`, {
-          id: track.id,
-          label: track.label,
-          enabled: track.enabled,
-          muted: track.muted,
-          readyState: track.readyState
-        });
-      });
-
+      // ✅ CRITICAL FIX: Always use or create a stream from the track
+      let stream = event.streams && event.streams[0] ? event.streams[0] : null;
+      
+      // ✅ Listen for track mute/unmute events to update UI
+      event.track.onmute = () => {
+        console.log(`🔇 Track muted for ${peerId}:`, event.track.kind);
+      };
+      
+      event.track.onunmute = () => {
+        console.log(`🔊 Track unmuted for ${peerId}:`, event.track.kind);
+      };
+      
+      event.track.onended = () => {
+        console.log(`⏹️ Track ended for ${peerId}:`, event.track.kind);
+      };
+      
       setRemoteStreamsMap(prev => {
         const updated = new Map(prev);
-        updated.set(peerId, stream);
+        const existing = updated.get(peerId);
+        
+        if (stream) {
+          // Stream provided in event - use it
+          if (existing && existing.id === stream.id) {
+            // Same stream, track was added to it - no need to update
+            console.log(`✅ Track added to existing stream ${stream.id} for ${peerId}`);
+          } else {
+            // New stream or different stream ID
+            updated.set(peerId, stream);
+            console.log(`✅ Set remote stream for peer ${peerId}:`, stream.id, 
+                        `video tracks: ${stream.getVideoTracks().length}`, 
+                        `audio tracks: ${stream.getAudioTracks().length}`);
+          }
+        } else {
+          // No stream in event - create or update one
+          if (existing) {
+            // Add track to existing stream
+            const hasTrack = existing.getTracks().some(t => t.id === event.track.id);
+            if (!hasTrack) {
+              existing.addTrack(event.track);
+              console.log(`➕ Added ${event.track.kind} track to existing stream for ${peerId}`);
+            }
+          } else {
+            // Create new stream with this track
+            const newStream = new MediaStream([event.track]);
+            updated.set(peerId, newStream);
+            console.log(`🆕 Created new stream entry for ${peerId} with ${event.track.kind} track`);
+          }
+        }
+        
+        // Verify final stream state
+        const finalStream = updated.get(peerId);
+        if (finalStream) {
+          console.log(`📺 Remote stream for ${peerId}:`, {
+            streamId: finalStream.id,
+            videoTracks: finalStream.getVideoTracks().length,
+            audioTracks: finalStream.getAudioTracks().length,
+            videoEnabled: finalStream.getVideoTracks().map(t => t.enabled),
+            audioEnabled: finalStream.getAudioTracks().map(t => t.enabled)
+          });
+        }
+        
         remoteStreamsMapRef.current = updated;
-        console.log(`📺 Updated remote streams map for peer ${peerId}:`, {
-          totalStreams: updated.size,
-          streamId: stream.id,
-          videoTracks: stream.getVideoTracks().length,
-          audioTracks: stream.getAudioTracks().length,
-          allPeerIds: Array.from(updated.keys())
-        });
         return updated;
       });
     };

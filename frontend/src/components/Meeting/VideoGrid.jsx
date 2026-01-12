@@ -21,17 +21,25 @@ const VideoTile = ({ stream, username, isLocal, isMuted, isVideoOff, isActiveSpe
 
     if (stream instanceof MediaStream) {
       const videoTracks = stream.getVideoTracks();
+      const audioTracks = stream.getAudioTracks();
       const trackIds = videoTracks.map(t => t.id).join(',');
       
       console.log(`📺 Video effect triggered for ${username}:`, {
         streamId: stream.id,
         videoTracks: videoTracks.length,
         trackIds: trackIds.substring(0, 30),
-        audioTracks: stream.getAudioTracks().length,
+        audioTracks: audioTracks.length,
         videoTrackStates: videoTracks.map(t => ({
           id: t.id.substring(0, 8),
           enabled: t.enabled,
-          readyState: t.readyState
+          readyState: t.readyState,
+          muted: t.muted
+        })),
+        audioTrackStates: audioTracks.map(t => ({
+          id: t.id.substring(0, 8),
+          enabled: t.enabled,
+          readyState: t.readyState,
+          muted: t.muted
         }))
       });
       
@@ -39,16 +47,21 @@ const VideoTile = ({ stream, username, isLocal, isMuted, isVideoOff, isActiveSpe
       console.log(`🔄 Setting/updating srcObject for ${username}`);
       video.srcObject = stream;
       
-      // Ensure video properties are set
+      // Ensure video properties are set correctly
       video.autoplay = true;
       video.playsInline = true;
+      
+      // CRITICAL FIX: Only mute local video, NOT remote video
+      // Remote video muted=false allows us to see their video
       if (isLocal) {
         video.muted = true; // Local video must be muted to prevent echo
+      } else {
+        video.muted = false; // Remote video NOT muted - we want to see/hear them
+        video.volume = 1.0; // Ensure volume is at max for remote participants
       }
-      // Remote video should NOT be muted so we can hear them
       
       // Force play with retry logic and timeout
-      const attemptPlay = async (retries = 3) => {
+      const attemptPlay = async (retries = 5) => {
         for (let i = 0; i < retries; i++) {
           try {
             // Wait a bit before attempting to ensure element is in DOM
@@ -62,8 +75,16 @@ const VideoTile = ({ stream, username, isLocal, isMuted, isVideoOff, isActiveSpe
               return;
             }
             
+            // Load metadata first
+            video.load();
+            
             await video.play();
-            console.log(`✅ Video playing for ${username}`);
+            console.log(`✅ Video playing for ${username}`, {
+              paused: video.paused,
+              currentTime: video.currentTime,
+              readyState: video.readyState,
+              networkState: video.networkState
+            });
             return;
           } catch (err) {
             console.warn(`⚠️ Video play attempt ${i + 1}/${retries} failed for ${username}:`, err.message);
@@ -130,22 +151,23 @@ const VideoTile = ({ stream, username, isLocal, isMuted, isVideoOff, isActiveSpe
     return () => clearInterval(checkInterval);
   }, [stream, username]);
 
-  // Check if stream has enabled video tracks
+  // Check if stream has video tracks (regardless of enabled state)
+  const hasVideoTrack = stream && stream.getVideoTracks().length > 0;
+  
+  // Check if video track is actually enabled and live
   const hasEnabledVideo = stream && stream.getVideoTracks().some(track => 
     track.readyState === 'live' && track.enabled
   );
   
   // For debugging
-  if (stream && !hasEnabledVideo) {
+  if (stream && hasVideoTrack && !hasEnabledVideo) {
     const videoTracks = stream.getVideoTracks();
-    if (videoTracks.length > 0) {
-      console.log(`📹 Video tracks for ${username}:`, videoTracks.map(t => ({
-        kind: t.kind,
-        enabled: t.enabled,
-        readyState: t.readyState,
-        muted: t.muted
-      })));
-    }
+    console.log(`📹 Video tracks disabled for ${username}:`, videoTracks.map(t => ({
+      kind: t.kind,
+      enabled: t.enabled,
+      readyState: t.readyState,
+      muted: t.muted
+    })));
   }
 
   return (
@@ -156,13 +178,28 @@ const VideoTile = ({ stream, username, isLocal, isMuted, isVideoOff, isActiveSpe
         playsInline
         muted={isLocal}
         className="video-element"
-        style={{ display: stream ? 'block' : 'none' }}
+        style={{ 
+          display: 'block',
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          backgroundColor: '#1a1a2e'
+        }}
       />
       
       {!stream && (
         <div className="video-placeholder">
           <div className="avatar-large">
             {username?.charAt(0)?.toUpperCase() || <User size={48} />}
+          </div>
+        </div>
+      )}
+      
+      {/* Show placeholder when video track is disabled */}
+      {stream && hasVideoTrack && !hasEnabledVideo && (
+        <div className="video-placeholder">
+          <div className="avatar-large">
+            {username?.charAt(0)?.toUpperCase() || <VideoOff size={48} />}
           </div>
         </div>
       )}
@@ -219,26 +256,28 @@ const VideoGrid = ({
         audioTracks: remoteStream?.getAudioTracks().length
       });
       
-      // Validate stream has active tracks
+      // Validate stream has tracks (even if disabled)
+      // A track can be live but disabled (camera off), we still want to show the stream
       const hasValidTracks = remoteStream && 
         remoteStream.getTracks().length > 0 &&
-        remoteStream.getTracks().some(track => track.readyState === 'live');
+        remoteStream.getTracks().some(track => track.readyState === 'live' || track.readyState === 'ended');
       
       if (!remoteStream) {
         console.warn(`⚠️ No remote stream found for participant ${p.username} (${p.user_id})`);
       } else if (!hasValidTracks) {
-        console.warn(`⚠️ Remote stream for ${p.username} has no valid tracks`);
+        console.warn(`⚠️ Remote stream for ${p.username} has no tracks`);
       } else {
-        console.log(`✅ Valid remote stream for ${p.username}:`, {
+        console.log(`✅ Remote stream for ${p.username}:`, {
           streamId: remoteStream.id,
-          tracks: remoteStream.getTracks().map(t => `${t.kind}:${t.readyState}`)
+          tracks: remoteStream.getTracks().map(t => `${t.kind}:${t.enabled ? 'enabled' : 'disabled'}:${t.readyState}`)
         });
       }
       
+      // Always pass the stream if it exists and has tracks (regardless of enabled state)
       return {
         user_id: p.user_id,
         username: p.username,
-        stream: hasValidTracks ? remoteStream : null,
+        stream: remoteStream && remoteStream.getTracks().length > 0 ? remoteStream : null,
         isLocal: false,
         isMuted: !p.is_audio_on,
         isVideoOff: !p.is_video_on

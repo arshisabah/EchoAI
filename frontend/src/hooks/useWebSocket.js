@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
 const RECONNECT_DELAY = 3000;
-const MAX_RECONNECT_ATTEMPTS = 5;
-const PING_INTERVAL = 60000;
+const MAX_RECONNECT_ATTEMPTS = 10;
+const PING_INTERVAL = 30000; // Send ping every 30 seconds (backend timeout is 120s)
 
 export const useWebSocket = (roomId, userId, username, password, role = 'participant') => {
     const [isConnected, setIsConnected] = useState(false);
@@ -72,13 +72,21 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                 reconnectAttempts.current = 0;
                 isConnectingRef.current = false;
 
-                // Start ping interval
+                // Start ping interval to keep connection alive
                 if (pingIntervalRef.current) {
                     clearInterval(pingIntervalRef.current);
                 }
                 pingIntervalRef.current = setInterval(() => {
                     if (wsRef.current?.readyState === WebSocket.OPEN) {
-                        wsRef.current.send(JSON.stringify({ type: 'ping' }));
+                        try {
+                            wsRef.current.send(JSON.stringify({ type: 'ping' }));
+                            console.log('💓 Ping sent to keep connection alive');
+                        } catch (err) {
+                            console.error('❌ Failed to send ping:', err);
+                        }
+                    } else {
+                        console.warn('⚠️ Cannot send ping - WebSocket not open:', wsRef.current?.readyState);
+                        clearInterval(pingIntervalRef.current);
                     }
                 }, PING_INTERVAL);
             };
@@ -327,8 +335,13 @@ export const useWebSocket = (roomId, userId, username, password, role = 'partici
                             break;
 
                         case 'ping_timeout':
-                            console.log('💓 Ping timeout — sending heartbeat back');
-                            wsRef.current?.send(JSON.stringify({ type: 'ping' }));
+                        case 'ping':
+                            console.log('💓 Received ping from server — sending pong back');
+                            try {
+                                wsRef.current?.send(JSON.stringify({ type: 'pong' }));
+                            } catch (err) {
+                                console.error('❌ Failed to send pong:', err);
+                            }
                             break;
 
                         case 'chat_message':
